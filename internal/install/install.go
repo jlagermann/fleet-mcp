@@ -259,8 +259,15 @@ func (in *Installer) Plan(ctx context.Context) ([]StepStatus, error) {
 		if state == Blocked {
 			blocked = true
 		}
+		// A pending package, certificate or config change restarts the
+		// service when executed; show the service step as pending too.
+		if state == Pending && (s.name == "package" || s.name == "identity_cert" || s.name == "config") {
+			in.restartNeeded = true
+		}
 		// Later checks depend on the package being installed.
-		if state == Pending && (s.name == "package" || s.name == "service") {
+		// Later checks need the package installed and the service running;
+		// a running service that only needs a restart does not block them.
+		if state == Pending && (s.name == "package" || (s.name == "service" && !in.restartNeeded)) {
 			blocked = true
 		}
 		out = append(out, st)

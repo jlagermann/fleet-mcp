@@ -13,12 +13,12 @@ func TestNewSSHValidates(t *testing.T) {
 			t.Errorf("accepted %q %q", c.host, c.user)
 		}
 	}
-	s, err := NewSSH("192.168.10.21", "james", 2222)
+	s, err := NewSSH("192.0.2.10", "james", 2222)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := strings.Join(s.Args(), " ")
-	if !strings.Contains(args, "BatchMode=yes") || !strings.Contains(args, "-p 2222 -l james -- 192.168.10.21 sudo -n bash -s") {
+	if !strings.Contains(args, "BatchMode=yes") || !strings.Contains(args, "-p 2222 -l james -- 192.0.2.10 sudo -n bash -s") {
 		t.Fatalf("args = %s", args)
 	}
 }

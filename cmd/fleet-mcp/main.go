@@ -91,6 +91,7 @@ func usage() {
   fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
   fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
   fleet-mcp secret import <name> <file>   import a certificate or license file
+  fleet-mcp host checklist <host>         everything to provide before an install, with status
   fleet-mcp host check <host>             check a host's readiness for Fleet Manager
   fleet-mcp host install <host> [flags]   preview an installation; add -execute to run it
   fleet-mcp version
@@ -464,6 +465,13 @@ func hostCmd(args []string) error {
 	r.Binary = e.cfg.SSHBinary
 	ctx := context.Background()
 	switch sub {
+	case "checklist":
+		items, err := install.Checklist(ctx, e.secrets, target, r)
+		if err != nil {
+			return err
+		}
+		fmt.Print(install.RenderChecklist(items))
+		return nil
 	case "check":
 		rep, err := install.Check(ctx, r)
 		if err != nil {

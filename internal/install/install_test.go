@@ -267,3 +267,31 @@ func TestTokenScriptKeepsTokenOffCommandLines(t *testing.T) {
 		t.Fatal("token not in a quoted heredoc")
 	}
 }
+
+func TestChecklist(t *testing.T) {
+	st, _ := secrets.Open(t.TempDir())
+	items, err := Checklist(context.Background(), st, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ChecklistReady(items) {
+		t.Fatal("ready without a token or certificate")
+	}
+	md := RenderChecklist(items)
+	for _, want := range []string{"[ ] MISSING Package repository auth token", "fleet-mcp secret set repo-token", "[?] not checked", "temporary password", "Resolve the MISSING"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("checklist lacks %q:\n%s", want, md)
+		}
+	}
+	_ = st.Set("", secrets.RepoToken, []byte("abcdef0123456789abcdef"))
+	r := &fakeRunner{answers: map[string]string{`echo "os_id=`: strings.Replace(goodFacts, "ntp_synced=no", "ntp_synced=yes", 1)}}
+	items, _ = Checklist(context.Background(), st, "h", r)
+	for _, it := range items {
+		if it.Section == "Host" && it.Status != Ready {
+			t.Errorf("host item %q = %s (%s)", it.Item, it.Status, it.Detail)
+		}
+	}
+	if ChecklistReady(items) {
+		t.Fatal("ready without the identity certificate")
+	}
+}

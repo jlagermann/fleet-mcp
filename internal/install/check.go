@@ -139,7 +139,7 @@ func Grade(f map[string]string) *Report {
 	}
 	// MemTotal excludes kernel-reserved memory, so allow ~5% under.
 	if mb := atoi(f["mem_mb"]); mb >= minMemMB*95/100 {
-		add("memory", Pass, "%d MB (minimum %d MB for up to 10 sensors)", mb, minMemMB)
+		add("memory", Pass, "%d MB usable (meets the %d GB minimum for up to 10 sensors)", mb, minMemMB/1024)
 	} else {
 		add("memory", Warn, "%d MB; Fleet Manager recommends at least %d MB for up to 10 sensors (16 GB for 11-200)", mb, minMemMB)
 	}

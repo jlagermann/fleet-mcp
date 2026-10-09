@@ -62,7 +62,7 @@ func Instructions(writes, fleetConfigured bool) string {
 }
 
 const hostInstructions = `
-- Installing Fleet Manager: run fm_host_check on the host, then fm_secrets_status. The user supplies their own Corelight repository token and product identity certificate: tokens at a hidden terminal prompt (fleet-mcp secret set repo-token) and files with fm_secret_import_file. Never ask for tokens or passwords in the chat. Then fm_host_install (preview, approval, confirm).`
+- Installing Fleet Manager: when the user wants to install, first call fm_install_checklist (with the host if known) and show its markdown checklist to the user; work through the missing items with them before fm_host_install. The user supplies their own Corelight repository token and product identity certificate: tokens at a hidden terminal prompt (fleet-mcp secret set repo-token) and files with fm_secret_import_file. Never ask for tokens or passwords in the chat. Then fm_host_install (preview, approval, confirm).`
 
 const writeInstructions = `
 - Changes (fm_api_write, fm_graphql_mutate) take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send the confirming call without that approval, and preview again if anything in the request changes.

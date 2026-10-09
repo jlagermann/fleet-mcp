@@ -55,6 +55,38 @@ func registerHost(s *mcp.Server, d *Deps) {
 		return res, nil, err
 	})
 
+	type checklistArgs struct {
+		Host    string `json:"host,omitempty" jsonschema:"the intended Fleet Manager host; when given, it is checked over SSH"`
+		SSHUser string `json:"ssh_user,omitempty" jsonschema:"SSH user with passwordless sudo (default: FLEET_MCP_SSH_USER or your ssh config)"`
+		SSHPort int    `json:"ssh_port,omitempty" jsonschema:"SSH port (default 22)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "fm_install_checklist",
+		Description: "Everything a user must provide or decide before installing Fleet Manager (host access and resources, the Corelight repository token and product identity certificate, optional community string and Software Sensor license, version, agent user name, address), each with its current status and how to provide it. " +
+			"Call this first whenever the user wants to install Fleet Manager, and show the returned markdown to the user. Read-only; values of secrets are never returned.",
+		Annotations: &mcp.ToolAnnotations{Title: "Install checklist", ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &f},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a checklistArgs) (*mcp.CallToolResult, any, error) {
+		var r host.Runner
+		if a.Host != "" {
+			ssh, err := d.runner(hostArgs(a))
+			if err != nil {
+				return nil, nil, err
+			}
+			r = ssh
+		}
+		items, err := install.Checklist(ctx, d.Secrets, a.Host, r)
+		if err != nil {
+			return nil, nil, err
+		}
+		md := install.RenderChecklist(items)
+		res, err := jsonResult(map[string]any{"ready": install.ChecklistReady(items), "items": items, "markdown": md})
+		if res != nil {
+			// Put the display text first so clients show it readably.
+			res.Content = append([]mcp.Content{&mcp.TextContent{Text: md}}, res.Content...)
+		}
+		return res, nil, err
+	})
+
 	type secretsArgs struct {
 		Host string `json:"host,omitempty" jsonschema:"also show the secrets generated for this Fleet Manager host"`
 	}
@@ -164,8 +196,10 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 			if err != nil {
 				return nil, nil, err
 			}
+			items, _ := install.Checklist(ctx, d.Secrets, a.Host, r)
 			out := map[string]any{
 				"preview": true, "host": r.Name(), "url": in.URL(), "options": opts, "steps": plan,
+				"checklist": install.RenderChecklist(items), "checklist_ready": install.ChecklistReady(items),
 				"confirm_token": token,
 				"next":          "Show the steps to the user. Blocked steps must be resolved first (for missing secrets see fm_secrets_status). After the user approves, call fm_host_install again with the same arguments plus confirm_token.",
 			}

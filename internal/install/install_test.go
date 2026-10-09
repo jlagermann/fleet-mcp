@@ -186,6 +186,64 @@ func TestReadinessBlocksOnResourceWarnings(t *testing.T) {
 	}
 }
 
+type fakeBootstrap struct {
+	activated   string
+	adminExists bool
+}
+
+func (f *fakeBootstrap) MCPUserReady(context.Context, *Installer) (bool, string) { return false, "" }
+func (f *fakeBootstrap) ActivateMCPUser(_ context.Context, _ *Installer, temp string) error {
+	f.activated = temp
+	return nil
+}
+func (f *fakeBootstrap) AdminExists(context.Context, *Installer) (bool, error) { return f.adminExists, nil }
+
+const created = "User \"%s\" successfully created.\n\nUser info:\n   ID:          19a3\n   Password:    %s\n   FleetAdmin:  true\n"
+
+func TestAdminTemporaryPasswordReturned(t *testing.T) {
+	r := &fakeRunner{answers: map[string]string{"create-user -a 'admin'": strings.ReplaceAll(strings.Replace(created, "%s", "admin", 1), "%s", "Tmp-pw.1")}}
+	in := &Installer{R: r, Host: "h", Opts: Options{MCPUser: "fleet-mcp"}, Bootstrap: &fakeBootstrap{}}
+	detail, err := in.applyAdmin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.AdminTempPassword != "Tmp-pw.1" || !strings.Contains(detail, "Tmp-pw.1") || !strings.Contains(detail, "require a new password") {
+		t.Fatalf("detail %q, temp %q", detail, in.AdminTempPassword)
+	}
+	for _, s := range r.scripts {
+		if strings.Contains(s, "reset-password") {
+			t.Fatal("admin password reset attempted")
+		}
+	}
+}
+
+func TestExistingAdminUntouched(t *testing.T) {
+	r := &fakeRunner{answers: map[string]string{"create-user -a 'admin'": "error: user admin already exists\n"}}
+	in := &Installer{R: r, Host: "h", Opts: Options{MCPUser: "fleet-mcp"}, Bootstrap: &fakeBootstrap{}}
+	detail, err := in.applyAdmin(context.Background())
+	if err != nil || in.AdminTempPassword != "" || !strings.Contains(detail, "left untouched") {
+		t.Fatalf("%q %v", detail, err)
+	}
+	for _, s := range r.scripts {
+		if strings.Contains(s, "reset-password") {
+			t.Fatal("existing admin was reset")
+		}
+	}
+}
+
+func TestMCPUserResetWhenExisting(t *testing.T) {
+	r := &fakeRunner{answers: map[string]string{
+		"create-user -a 'fleet-mcp'":    "error: user fleet-mcp already exists\n",
+		"reset-password 'fleet-mcp'":    "   Password:    Reset-1x\n",
+	}}
+	fb := &fakeBootstrap{}
+	in := &Installer{R: r, Host: "h", Opts: Options{MCPUser: "fleet-mcp"}, Bootstrap: fb}
+	detail, err := in.applyMCPUser(context.Background())
+	if err != nil || fb.activated != "Reset-1x" || !strings.Contains(detail, "reset") || strings.Contains(detail, "Reset-1x") {
+		t.Fatalf("%q %v activated=%q", detail, err, fb.activated)
+	}
+}
+
 func TestOptionsValidate(t *testing.T) {
 	for _, o := range []Options{{Version: "29.2; rm -rf /"}, {MCPUser: "admin"}, {MCPUser: "a b"}} {
 		if err := o.Validate(); err == nil {

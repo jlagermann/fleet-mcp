@@ -47,7 +47,6 @@ const (
 	RegistryUser     = "registry-user"
 	RegistryPassword = "registry-password"
 	CommunityString  = "community-string"
-	AdminPassword    = "admin-password"
 	MCPPassword      = "mcp-password"
 )
 
@@ -58,18 +57,25 @@ type Spec struct {
 	Kind        Kind   `json:"kind"`
 	Description string `json:"description"`
 	UsedFor     string `json:"used_for"`
+	// Settable generated secrets may instead be set by the user at a
+	// prompt before they are generated.
+	Settable bool `json:"user_settable,omitempty"`
+	// Showable secrets can be printed in the user's own terminal with
+	// fleet-mcp secret show; no MCP tool ever returns a value.
+	Showable bool `json:"-"`
 }
 
-// Known lists every secret fleet-mcp uses.
+// Known lists every secret fleet-mcp uses. fleet-mcp never stores a
+// Fleet Manager admin password: the admin account's temporary password is
+// handed to the user, who must change it at first login.
 var Known = []Spec{
-	{RepoToken, Global, Prompt, "Corelight package repository auth token (Corelight Customer Portal → Downloads → Fleet Manager)", "installing and upgrading Fleet Manager from the Corelight repository"},
-	{IdentityCert, Global, File, "Fleet Manager product identity certificate (.pem with certificate and key) issued by Corelight; contains the Fleet Manager license", "installing Fleet Manager"},
-	{SensorLicense, Global, File, "Software Sensor license file", "optional: licensing Software Sensors through Fleet Manager"},
-	{RegistryUser, Global, Prompt, "Corelight container registry username (Customer Portal → Tokens → Container Registry)", "container installs"},
-	{RegistryPassword, Global, Prompt, "Corelight container registry password", "container installs"},
-	{CommunityString, Host, Generated, "pre-shared secret sensors use to connect to this Fleet Manager", "sensor connections"},
-	{AdminPassword, Host, Generated, "password of this Fleet Manager's admin user", "break-glass administration"},
-	{MCPPassword, Host, Generated, "password of the local user fleet-mcp logs in as", "the MCP server's API access"},
+	{Name: RepoToken, Scope: Global, Kind: Prompt, Description: "Corelight package repository auth token (Corelight Customer Portal → Downloads → Fleet Manager)", UsedFor: "installing and upgrading Fleet Manager from the Corelight repository"},
+	{Name: IdentityCert, Scope: Global, Kind: File, Description: "Fleet Manager product identity certificate (.pem with certificate and key) issued by Corelight; contains the Fleet Manager license", UsedFor: "installing Fleet Manager"},
+	{Name: SensorLicense, Scope: Global, Kind: File, Description: "Software Sensor license file", UsedFor: "optional: licensing Software Sensors through Fleet Manager"},
+	{Name: RegistryUser, Scope: Global, Kind: Prompt, Description: "Corelight container registry username (Customer Portal → Tokens → Container Registry)", UsedFor: "container installs"},
+	{Name: RegistryPassword, Scope: Global, Kind: Prompt, Description: "Corelight container registry password", UsedFor: "container installs"},
+	{Name: CommunityString, Scope: Host, Kind: Generated, Description: "pre-shared secret sensors use to connect to this Fleet Manager (messaging.community-string)", UsedFor: "sensor connections", Settable: true, Showable: true},
+	{Name: MCPPassword, Scope: Host, Kind: Generated, Description: "password of the local user fleet-mcp logs in as", UsedFor: "the MCP server's API access"},
 }
 
 // Lookup returns the Spec for name.
@@ -236,6 +242,9 @@ func howTo(name string) string {
 	case File:
 		return fmt.Sprintf("; import it with fm_secret_import_file (name %q and the file's path) or: fleet-mcp secret import %s <path>", name, name)
 	default:
+		if spec.Settable {
+			return fmt.Sprintf("; fm_host_install generates it, or the user sets their own first with: fleet-mcp secret set %s -host <host>", name)
+		}
 		return "; fm_host_install creates it"
 	}
 }

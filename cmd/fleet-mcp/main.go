@@ -5,7 +5,8 @@
 //	fleet-mcp gql <query>                   run a read-only GraphQL query
 //	fleet-mcp spec [-out dir]               download the REST spec and GraphQL schema
 //	fleet-mcp secret list [host]            show stored secrets (never values)
-//	fleet-mcp secret set <name>             set a token or password at a hidden prompt
+//	fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
+//	fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
 //	fleet-mcp secret import <name> <file>   import a certificate or license file
 //	fleet-mcp host check <host>             check a host's readiness for Fleet Manager
 //	fleet-mcp host install <host> [flags]   preview, or with -execute run, an installation
@@ -23,7 +24,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"time"
 
@@ -85,7 +88,8 @@ func usage() {
   fleet-mcp gql <query>                   run a read-only GraphQL query
   fleet-mcp spec [-out dir]               download the REST spec and GraphQL schema
   fleet-mcp secret list [host]            show stored secrets (never values)
-  fleet-mcp secret set <name>             set a token or password at a hidden prompt
+  fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
+  fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
   fleet-mcp secret import <name> <file>   import a certificate or license file
   fleet-mcp host check <host>             check a host's readiness for Fleet Manager
   fleet-mcp host install <host> [flags]   preview an installation; add -execute to run it
@@ -288,12 +292,25 @@ func secretCmd(args []string) error {
 		fmt.Println(string(b))
 		return nil
 	case "set":
-		if len(args) != 2 {
-			return errors.New("usage: fleet-mcp secret set <name>")
+		if len(args) < 2 {
+			return errors.New("usage: fleet-mcp secret set <name> [-host <fleet manager host>]")
+		}
+		fs := flag.NewFlagSet("secret set", flag.ContinueOnError)
+		hostFlag := fs.String("host", "", "Fleet Manager host, for per-host secrets such as community-string")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
 		}
 		spec, ok := secrets.Lookup(args[1])
-		if !ok || spec.Kind != secrets.Prompt {
-			return fmt.Errorf("%q cannot be set at a prompt; prompt secrets are: %s", args[1], promptNames())
+		if !ok || !(spec.Kind == secrets.Prompt || spec.Settable) {
+			return fmt.Errorf("%q cannot be set at a prompt; settable secrets are: %s", args[1], promptNames())
+		}
+		if spec.Scope == secrets.Host && *hostFlag == "" {
+			return fmt.Errorf("%s belongs to one Fleet Manager: add -host <host>", spec.Name)
+		}
+		if p, err := e.secrets.Path(*hostFlag, spec.Name); err == nil {
+			if _, err := os.Stat(p); err == nil {
+				fmt.Fprintf(os.Stderr, "note: replacing the stored %s\n", spec.Name)
+			}
 		}
 		v, err := readSecret(spec)
 		if err != nil {
@@ -302,10 +319,43 @@ func secretCmd(args []string) error {
 		if _, err := secrets.Validate(spec.Name, []byte(v)); err != nil {
 			return err
 		}
-		if err := e.secrets.Set("", spec.Name, []byte(v)); err != nil {
+		if err := e.secrets.Set(*hostFlag, spec.Name, []byte(v)); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "stored %s\n", spec.Name)
+		if spec.Name == secrets.CommunityString {
+			fmt.Fprintln(os.Stderr, "fm_host_install will use it; on an existing Fleet Manager, sensors must be re-paired after the config changes")
+		}
+		return nil
+	case "show":
+		if len(args) < 2 {
+			return errors.New("usage: fleet-mcp secret show <name> -host <host> [-copy]")
+		}
+		fs := flag.NewFlagSet("secret show", flag.ContinueOnError)
+		hostFlag := fs.String("host", "", "Fleet Manager host")
+		copyFlag := fs.Bool("copy", false, "copy to the clipboard instead of printing")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		spec, ok := secrets.Lookup(args[1])
+		if !ok || !spec.Showable {
+			return fmt.Errorf("%q cannot be shown; only values users need to type elsewhere can (community-string)", args[1])
+		}
+		v, err := e.secrets.GetString(*hostFlag, spec.Name)
+		if err != nil {
+			return err
+		}
+		if *copyFlag {
+			if err := copyToClipboard(v); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "copied %s for %s to the clipboard\n", spec.Name, *hostFlag)
+			return nil
+		}
+		if !term.IsTerminal(int(os.Stdout.Fd())) {
+			return errors.New("refusing to print a secret to a pipe or file; run this in a terminal, or use -copy")
+		}
+		fmt.Println(v)
 		return nil
 	case "import":
 		if len(args) != 3 {
@@ -325,11 +375,33 @@ func secretCmd(args []string) error {
 func promptNames() string {
 	var n []string
 	for _, s := range secrets.Known {
-		if s.Kind == secrets.Prompt {
+		if s.Kind == secrets.Prompt || s.Settable {
 			n = append(n, s.Name)
 		}
 	}
 	return strings.Join(n, ", ")
+}
+
+// copyToClipboard uses the platform's clipboard command.
+func copyToClipboard(v string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("clip.exe")
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	default:
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command("wl-copy")
+		} else {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		}
+	}
+	cmd.Stdin = strings.NewReader(v)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("copying to the clipboard: %v %s", err, out)
+	}
+	return nil
 }
 
 // readSecret prompts twice without echo when stdin is a terminal, or reads
@@ -435,6 +507,9 @@ func hostCmd(args []string) error {
 				fmt.Printf("\n%25s%s", "", s.Detail)
 			}
 			fmt.Println()
+		}
+		if in.AdminTempPassword != "" {
+			fmt.Printf("\nadmin temporary password: %s\nlog in at %s as admin; Fleet Manager will require a new password.\n", in.AdminTempPassword, in.URL())
 		}
 		if runErr == nil && *execute {
 			if p, err := install.ReadProfile(e.secrets, target); err == nil {

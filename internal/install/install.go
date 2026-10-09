@@ -99,20 +99,23 @@ type Installer struct {
 	// supplied by the caller so this package stays free of HTTP details.
 	Bootstrap Bootstrapper
 
+	// AdminTempPassword is set when Execute creates the admin user. It is
+	// temporary: Fleet Manager requires a change at first login.
+	AdminTempPassword string
+
 	restartNeeded bool
 	steps         []step
 }
 
 // Bootstrapper finishes setup through the Fleet Manager API.
 type Bootstrapper interface {
-	// AdminReady reports whether the stored admin password logs in.
-	AdminReady(ctx context.Context, in *Installer) (bool, string)
-	// SetAdmin replaces the admin's temporary password and stores it.
-	SetAdmin(ctx context.Context, in *Installer, tempPassword string) error
 	// MCPUserReady reports whether the stored MCP user password logs in.
 	MCPUserReady(ctx context.Context, in *Installer) (bool, string)
-	// CreateMCPUser creates the MCP user and stores its password.
-	CreateMCPUser(ctx context.Context, in *Installer) error
+	// ActivateMCPUser replaces the MCP user's temporary password with a
+	// generated one and stores it.
+	ActivateMCPUser(ctx context.Context, in *Installer, tempPassword string) error
+	// AdminExists reports, using the MCP user, whether the admin user exists.
+	AdminExists(ctx context.Context, in *Installer) (bool, error)
 }
 
 // URL returns the Fleet Manager web URL.
@@ -195,8 +198,8 @@ func (in *Installer) build() {
 		{"identity_cert", "install the product identity certificate at " + identityPath + " (owner corelight-fleetd, mode 0400)", in.checkIdentity, in.applyIdentity},
 		{"config", "set the sensor community-string" + swaggerNote(in.Opts.ExposeSwagger) + " in " + confPath + " (backup first)", in.checkConfig, in.applyConfig},
 		{"service", "enable and (re)start " + serviceName + " and wait for the web API", in.checkService, in.applyService},
-		{"admin", "create the admin user and replace its temporary password with a generated one", in.checkAdmin, in.applyAdmin},
-		{"mcp_user", "create the local user \"" + in.Opts.MCPUser + "\" (admin role, no 2FA) for fleet-mcp", in.checkMCPUser, in.applyMCPUser},
+		{"mcp_user", "create the local Fleet Manager admin user \"" + in.Opts.MCPUser + "\" for fleet-mcp (corelight-fleetd create-user; its temporary password is replaced by a generated one stored only for fleet-mcp; an existing user of that name has its password reset)", in.checkMCPUser, in.applyMCPUser},
+		{"admin", "create the \"admin\" user with a temporary password returned to you; Fleet Manager requires changing it at first login (an existing admin is left untouched)", in.checkAdmin, in.applyAdmin},
 	}
 }
 
@@ -735,42 +738,33 @@ func ParseTempPassword(out string) (string, bool) {
 	return m[1], true
 }
 
-func (in *Installer) checkAdmin(ctx context.Context) (State, string, error) {
-	if in.Bootstrap == nil {
-		return Blocked, "no API bootstrapper", nil
-	}
-	if ok, detail := in.Bootstrap.AdminReady(ctx, in); ok {
-		return Done, detail, nil
-	}
-	return Pending, "", nil
-}
-
-func (in *Installer) applyAdmin(ctx context.Context) (string, error) {
+// fleetdUser runs corelight-fleetd create-user for a Fleet admin user, or
+// reset-password when allowed and the user already exists, and returns the
+// temporary password it prints.
+func (in *Installer) fleetdUser(ctx context.Context, user string, allowReset bool) (temp string, existed bool, err error) {
 	cmd := "sudo -u corelight-fleetd " + fleetdBin + " -c " + confPath
-	res, err := in.R.Run(ctx, cmd+" create-user -a admin 2>&1 || true")
+	res, err := in.R.Run(ctx, cmd+" create-user -a "+host.Quote(user)+" 2>&1 || true")
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	if temp, ok := ParseTempPassword(res.Stdout); ok {
+		return temp, false, nil
+	}
+	if !strings.Contains(strings.ToLower(res.Stdout), "exist") {
+		return "", false, fmt.Errorf("create-user %s did not print a temporary password: %s", user, firstLine(res.Stdout))
+	}
+	if !allowReset {
+		return "", true, nil
+	}
+	res, err = in.R.Run(ctx, cmd+" reset-password "+host.Quote(user)+" 2>&1 || true")
+	if err != nil {
+		return "", true, err
 	}
 	temp, ok := ParseTempPassword(res.Stdout)
-	action := "created"
 	if !ok {
-		if !strings.Contains(strings.ToLower(res.Stdout), "exist") {
-			return "", fmt.Errorf("create-user did not print a temporary password: %s", firstLine(res.Stdout))
-		}
-		// The admin exists but its password is unknown here: reset it.
-		res, err = in.R.Run(ctx, cmd+" reset-password admin 2>&1 || true")
-		if err != nil {
-			return "", err
-		}
-		if temp, ok = ParseTempPassword(res.Stdout); !ok {
-			return "", fmt.Errorf("admin exists and reset-password did not print a temporary password: %s", firstLine(host.Mask(res.Stdout)))
-		}
-		action = "already existed; password reset"
+		return "", true, fmt.Errorf("%s exists and reset-password did not print a temporary password: %s", user, firstLine(res.Stdout))
 	}
-	if err := in.Bootstrap.SetAdmin(ctx, in, temp); err != nil {
-		return "", err
-	}
-	return "admin " + action + "; a generated password replaced the temporary one and is stored locally", nil
+	return temp, true, nil
 }
 
 func (in *Installer) checkMCPUser(ctx context.Context) (State, string, error) {
@@ -784,10 +778,45 @@ func (in *Installer) checkMCPUser(ctx context.Context) (State, string, error) {
 }
 
 func (in *Installer) applyMCPUser(ctx context.Context) (string, error) {
-	if err := in.Bootstrap.CreateMCPUser(ctx, in); err != nil {
+	temp, existed, err := in.fleetdUser(ctx, in.Opts.MCPUser, true)
+	if err != nil {
 		return "", err
 	}
-	return "created; password stored locally", nil
+	if err := in.Bootstrap.ActivateMCPUser(ctx, in, temp); err != nil {
+		return "", err
+	}
+	if existed {
+		return "existed; its password was reset and replaced with a generated one stored for fleet-mcp", nil
+	}
+	return "created; its password is generated and stored for fleet-mcp", nil
+}
+
+func (in *Installer) checkAdmin(ctx context.Context) (State, string, error) {
+	if in.Bootstrap == nil {
+		return Blocked, "no API bootstrapper", nil
+	}
+	exists, err := in.Bootstrap.AdminExists(ctx, in)
+	if err != nil {
+		// Before the MCP user exists (preview of a new install) this is
+		// expected; the step will run.
+		return Pending, "", nil
+	}
+	if exists {
+		return Done, "the admin user exists and is yours; fleet-mcp does not manage its password", nil
+	}
+	return Pending, "", nil
+}
+
+func (in *Installer) applyAdmin(ctx context.Context) (string, error) {
+	temp, existed, err := in.fleetdUser(ctx, "admin", false)
+	if err != nil {
+		return "", err
+	}
+	if existed {
+		return "the admin user already exists; left untouched", nil
+	}
+	in.AdminTempPassword = temp
+	return fmt.Sprintf("created user \"admin\" with temporary password %s; log in at %s and Fleet Manager will require a new password. fleet-mcp does not keep it.", temp, in.URL()), nil
 }
 
 // --- helpers ---

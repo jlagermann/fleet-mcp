@@ -97,3 +97,21 @@ func TestValidateRepoToken(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateCommunityString(t *testing.T) {
+	if err := ValidateCommunityString("Ab1.`!@#$%^&*()-_,./|{}[]<>~"); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "has space", `quo"te`, "it's", "tab\there"} {
+		if ValidateCommunityString(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	spec, _ := Lookup(CommunityString)
+	if !spec.Settable || !spec.Showable {
+		t.Fatal("community-string must be settable and showable")
+	}
+	if _, ok := Lookup("admin-password"); ok {
+		t.Fatal("fleet-mcp must not store an admin password")
+	}
+}

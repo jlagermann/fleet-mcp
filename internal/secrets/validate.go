@@ -100,6 +100,21 @@ func ValidateRepoToken(t string) error {
 	return nil
 }
 
+// ValidateCommunityString applies the documented rules: at least one
+// character and no quote characters. Whitespace and control characters are
+// also refused.
+func ValidateCommunityString(s string) error {
+	if s == "" {
+		return errors.New("the community string must not be empty")
+	}
+	for _, r := range s {
+		if r == '"' || r == '\'' || r <= ' ' || r == 0x7f {
+			return errors.New("the community string must not contain quotes, spaces or control characters")
+		}
+	}
+	return nil
+}
+
 // Validate checks a value before it is stored.
 func Validate(name string, b []byte) (any, error) {
 	switch name {
@@ -107,6 +122,8 @@ func Validate(name string, b []byte) (any, error) {
 		return ValidateIdentityCert(b)
 	case RepoToken:
 		return nil, ValidateRepoToken(strings.TrimSpace(string(b)))
+	case CommunityString:
+		return nil, ValidateCommunityString(strings.TrimSpace(string(b)))
 	case SensorLicense:
 		if len(strings.TrimSpace(string(b))) == 0 {
 			return nil, errors.New("the license file is empty")

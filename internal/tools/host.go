@@ -139,7 +139,7 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_host_install",
-		Description: "Install and set up Fleet Manager on an Ubuntu 22.04/24.04 host over SSH, following the Corelight installation guide: repository key, source and token, the corelight-fleet package, the product identity certificate, corelight-fleetd.conf (generated sensor community-string, optional expose-swagger), the service, the admin user (its temporary password replaced by a generated one) and a local admin user for fleet-mcp. " +
+		Description: "Install and set up Fleet Manager on an Ubuntu 22.04/24.04 host over SSH, following the Corelight installation guide: repository key, source and token, the corelight-fleet package, the product identity certificate, corelight-fleetd.conf (sensor community-string: the user's own if set with fleet-mcp secret set community-string -host <host>, otherwise generated; optional expose-swagger), the service, a local admin user for fleet-mcp (password generated and kept only by fleet-mcp), and the \"admin\" user. The admin's temporary password is returned in admin_temporary_password: give it to the user, who must change it at first login; fleet-mcp does not keep it. An existing admin is never changed. " +
 			"Needs the repo-token and identity-cert.pem secrets (see fm_secrets_status) and passwordless sudo. Generated secrets are stored locally, never returned. " +
 			"Every step checks first and is skipped when already done, so a failed install can be re-run. " +
 			"Two steps: call without confirm_token for a preview of each step's state; after the user approves, call again with the same arguments plus confirm_token. Run fm_host_check first.",
@@ -182,6 +182,10 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 		}
 		auditErr := d.Audit.Write(rec)
 		out := map[string]any{"executed": true, "host": r.Name(), "steps": steps}
+		if in.AdminTempPassword != "" {
+			out["admin_temporary_password"] = in.AdminTempPassword
+			out["admin_login"] = "Give this temporary password to the user: log in at " + in.URL() + " as admin; Fleet Manager requires a new password at first login. fleet-mcp does not keep it."
+		}
 		if runErr != nil {
 			out["error"] = runErr.Error()
 			out["next"] = "Fix the failed step and run fm_host_install again; completed steps are skipped."

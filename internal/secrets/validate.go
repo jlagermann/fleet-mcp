@@ -95,9 +95,58 @@ var repoToken = regexp.MustCompile(`^[A-Za-z0-9]{16,128}$`)
 // ValidateRepoToken checks the shape of a package repository token.
 func ValidateRepoToken(t string) error {
 	if !repoToken.MatchString(t) {
-		return errors.New("a repository token is 16-128 letters and digits")
+		return fmt.Errorf("not a valid repository token (expected 16-128 letters and digits; got %s)", DescribeChars(t))
 	}
 	return nil
+}
+
+// Clean removes what terminals and copy-paste commonly add around a typed
+// or pasted secret: bracketed-paste markers, surrounding whitespace and
+// matching quotes.
+func Clean(s string) string {
+	s = strings.ReplaceAll(s, "\x1b[200~", "")
+	s = strings.ReplaceAll(s, "\x1b[201~", "")
+	s = strings.TrimSpace(s)
+	for len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return s
+}
+
+// DescribeChars summarizes a secret's shape for error messages without
+// revealing it: its length and the kinds of characters other than letters
+// and digits.
+func DescribeChars(s string) string {
+	var kinds []string
+	seen := map[string]bool{}
+	note := func(k string) {
+		if !seen[k] {
+			seen[k] = true
+			kinds = append(kinds, k)
+		}
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == ' ' || r == '\t':
+			note("spaces")
+		case r == '\x1b':
+			note("terminal escape codes")
+		case r < ' ' || r == 0x7f:
+			note("control characters")
+		case r == '"' || r == '\'':
+			note("quotes")
+		case r > 0x7f:
+			note("non-ASCII characters")
+		default:
+			note("punctuation")
+		}
+	}
+	d := fmt.Sprintf("%d characters", len([]rune(s)))
+	if len(kinds) > 0 {
+		d += " including " + strings.Join(kinds, ", ")
+	}
+	return d
 }
 
 // ValidateCommunityString applies the documented rules: at least one

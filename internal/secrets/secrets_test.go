@@ -115,3 +115,28 @@ func TestValidateCommunityString(t *testing.T) {
 		t.Fatal("fleet-mcp must not store an admin password")
 	}
 }
+
+func TestCleanAndDescribe(t *testing.T) {
+	tok := "a6d18e958feea5bc9b07f1d8b377492c2ca4e9656b2140cc"
+	for _, in := range []string{tok, " " + tok + "\t", "\x1b[200~" + tok + "\x1b[201~", `"` + tok + `"`, "'" + tok + "'"} {
+		if got := Clean(in); got != tok {
+			t.Errorf("Clean(%q) = %q", in, got)
+		}
+		if err := ValidateRepoToken(Clean(in)); err != nil {
+			t.Errorf("cleaned %q rejected: %v", in, err)
+		}
+	}
+	err := ValidateRepoToken("abc def-ghi\x1b0123456789")
+	if err == nil {
+		t.Fatal("bad token accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{"22 characters", "spaces", "punctuation", "terminal escape codes"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q lacks %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "abc") {
+		t.Errorf("error reveals the value: %q", msg)
+	}
+}

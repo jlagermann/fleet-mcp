@@ -318,7 +318,7 @@ func secretCmd(args []string) error {
 			return err
 		}
 		if _, err := secrets.Validate(spec.Name, []byte(v)); err != nil {
-			return err
+			return fmt.Errorf("%s NOT stored: %w", spec.Name, err)
 		}
 		if err := e.secrets.Set(*hostFlag, spec.Name, []byte(v)); err != nil {
 			return err
@@ -414,7 +414,7 @@ func readSecret(spec secrets.Spec) (string, error) {
 		if err != nil && line == "" {
 			return "", err
 		}
-		return strings.TrimSpace(line), nil
+		return secrets.Clean(line), nil
 	}
 	fmt.Fprintf(os.Stderr, "%s\n%s: ", spec.Description, spec.Name)
 	a, err := term.ReadPassword(fd)
@@ -428,10 +428,10 @@ func readSecret(spec secrets.Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if string(a) != string(b) {
-		return "", errors.New("the values did not match; nothing stored")
+	if secrets.Clean(string(a)) != secrets.Clean(string(b)) {
+		return "", errors.New("not stored: the two entries did not match")
 	}
-	return strings.TrimSpace(string(a)), nil
+	return secrets.Clean(string(a)), nil
 }
 
 func hostCmd(args []string) error {

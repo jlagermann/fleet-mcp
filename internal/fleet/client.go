@@ -422,7 +422,8 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return resp, nil
 }
 
-func (c *Client) send(ctx context.Context, tok, method, path string, query url.Values, body []byte, contentType string, limit int64, capped bool) (*Response, error) {
+// roundTrip sends one authenticated request; the caller closes the body.
+func (c *Client) roundTrip(ctx context.Context, tok, method, path string, query url.Values, body []byte, contentType string) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -448,6 +449,53 @@ func (c *Client) send(ctx context.Context, tok, method, path string, query url.V
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", method, path, err)
+	}
+	return resp, nil
+}
+
+// Download streams the body of a GET to w without buffering it, for files
+// larger than Do accepts. It fails if the body exceeds limit bytes.
+func (c *Client) Download(ctx context.Context, path string, w io.Writer, limit int64) (int64, error) {
+	if err := ValidatePath(path); err != nil {
+		return 0, err
+	}
+	tok, err := c.currentToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := c.roundTrip(ctx, tok, http.MethodGet, path, nil, nil, "")
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if tok, err = c.relogin(ctx, tok); err != nil {
+			return 0, err
+		}
+		resp, err = c.roundTrip(ctx, tok, http.MethodGet, path, nil, nil, "")
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return 0, &APIError{Method: http.MethodGet, Path: path, Status: resp.StatusCode, Body: excerpt(b)}
+	}
+	if resp.ContentLength > limit {
+		return 0, fmt.Errorf("GET %s: file is %d bytes, larger than the %d byte limit", path, resp.ContentLength, limit)
+	}
+	n, err := io.Copy(w, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return n, fmt.Errorf("GET %s: %w", path, err)
+	}
+	if n > limit {
+		return n, fmt.Errorf("GET %s: file is larger than the %d byte limit", path, limit)
+	}
+	return n, nil
+}
+
+func (c *Client) send(ctx context.Context, tok, method, path string, query url.Values, body []byte, contentType string, limit int64, capped bool) (*Response, error) {
+	resp, err := c.roundTrip(ctx, tok, method, path, query, body, contentType)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 	out := &Response{Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Header: resp.Header}

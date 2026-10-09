@@ -32,6 +32,7 @@ type Server struct {
 	Logins   int
 	Logouts  int
 	routes   map[string]any // "GET /path" -> JSON body
+	handlers map[string]http.HandlerFunc
 	LastGQL  string
 	Requests []string
 	// Bodies holds "METHOD /path body" for non-GET REST requests.
@@ -70,6 +71,19 @@ func (s *Server) Route(methodPath string, body any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.routes[methodPath] = body
+}
+
+// Handle registers a handler for requests whose "METHOD /path" starts with
+// prefix (the longest matching prefix wins). Handlers run after the login
+// and CSRF checks, before Route responses and the built-in GraphQL reply.
+// They run with the server lock held and must not call Server methods.
+func (s *Server) Handle(prefix string, h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.handlers == nil {
+		s.handlers = map[string]http.HandlerFunc{}
+	}
+	s.handlers[prefix] = h
 }
 
 // RequestLog returns "METHOD /path" for every request so far.
@@ -144,6 +158,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h := s.handler(r.Method + " " + r.URL.Path); h != nil {
+		h(w, r)
+		return
+	}
+
 	switch {
 	case r.URL.Path == "/fleet/v1/logout":
 		s.Logouts++
@@ -184,4 +203,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+}
+
+func (s *Server) handler(methodPath string) http.HandlerFunc {
+	best := ""
+	for p := range s.handlers {
+		if strings.HasPrefix(methodPath, p) && len(p) > len(best) {
+			best = p
+		}
+	}
+	if best == "" {
+		return nil
+	}
+	return s.handlers[best]
 }

@@ -128,7 +128,7 @@ func TestPlanBlocksWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &fakeRunner{answers: map[string]string{
-		"/etc/os-release": "ubuntu 22.04 x86_64\n",
+		`echo "os_id=`: goodFacts,
 		"dpkg-query -W -f='${Status}\\n' curl": "0\n",
 	}}
 	in := &Installer{R: r, Secrets: st, Host: "test-host", Opts: Options{}}
@@ -140,7 +140,7 @@ func TestPlanBlocksWithoutSecrets(t *testing.T) {
 	for _, s := range plan {
 		states[s.Step] = s.State
 	}
-	if states["os"] != Done || states["prerequisites"] != Pending || states["repo_key"] != Blocked || states["mcp_user"] != Pending {
+	if states["readiness"] != Done || states["prerequisites"] != Pending || states["repo_key"] != Blocked || states["mcp_user"] != Pending {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if !strings.Contains(plan[2].Detail, "fleet-mcp secret set repo-token") {
@@ -154,13 +154,35 @@ func TestPlanBlocksWithoutSecrets(t *testing.T) {
 	}
 }
 
-func TestPlanRefusesUnsupportedOS(t *testing.T) {
+const goodFacts = "os_id=ubuntu\nos_version=22.04\nos_name=Ubuntu 22.04.5 LTS\narch=x86_64\ncpus=4\nmem_mb=16000\n" +
+	"var_free_gb=120\ntmp_free_gb=120\nvar_fs=/\ntmp_fs=/\nport_443=free\nport_1443=free\nrepo_http=401\nntp_synced=no\n"
+
+func readinessOf(t *testing.T, facts string) StepStatus {
+	t.Helper()
 	st, _ := secrets.Open(t.TempDir())
-	r := &fakeRunner{answers: map[string]string{"/etc/os-release": "rocky 9.4 x86_64\n"}}
-	in := &Installer{R: r, Secrets: st, Host: "h"}
+	in := &Installer{R: &fakeRunner{answers: map[string]string{`echo "os_id=`: facts}}, Secrets: st, Host: "h"}
 	plan, err := in.Plan(context.Background())
-	if err != nil || plan[0].State != Blocked {
-		t.Fatalf("plan = %+v, %v", plan, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan[0]
+}
+
+func TestReadinessBlocksOnResourceWarnings(t *testing.T) {
+	if s := readinessOf(t, goodFacts); s.State != Done || !strings.Contains(s.Detail, "advisory: time_sync") {
+		t.Fatalf("good host: %+v", s)
+	}
+	for name, facts := range map[string]string{
+		"low disk":    strings.Replace(goodFacts, "var_free_gb=120", "var_free_gb=21", 1),
+		"low memory":  strings.Replace(goodFacts, "mem_mb=16000", "mem_mb=4000", 1),
+		"one cpu":     strings.Replace(goodFacts, "cpus=4", "cpus=1", 1),
+		"rhel":        strings.Replace(goodFacts, "os_id=ubuntu\nos_version=22.04", "os_id=rhel\nos_version=9.4", 1),
+		"old ubuntu":  strings.Replace(goodFacts, "os_version=22.04", "os_version=20.04", 1),
+		"port in use": strings.Replace(goodFacts, "port_443=free", "port_443=nginx", 1),
+	} {
+		if s := readinessOf(t, facts); s.State != Blocked {
+			t.Errorf("%s: %+v", name, s)
+		}
 	}
 }
 

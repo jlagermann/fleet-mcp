@@ -186,7 +186,7 @@ func Generate(n int, symbols bool) string {
 
 func (in *Installer) build() {
 	in.steps = []step{
-		{"os", "check the operating system is supported Ubuntu (22.04/24.04, x86_64)", in.checkOS, nil},
+		{"readiness", "check the host meets Fleet Manager's requirements (supported OS, CPUs, memory, disk, free ports, repository access); any failure or resource warning stops the install", in.checkReadiness, nil},
 		{"prerequisites", "install curl, gnupg and apt-transport-https", in.checkPrereqs, in.applyPrereqs},
 		{"repo_key", "download the Corelight Fleet repository signing key to " + keyringPath, in.checkKey, in.applyKey},
 		{"repo_source", "write " + sourcesPath, in.checkSources, in.applySources},
@@ -295,19 +295,46 @@ func (in *Installer) Execute(ctx context.Context) ([]StepStatus, error) {
 
 // --- steps ---
 
-func (in *Installer) checkOS(ctx context.Context) (State, string, error) {
-	res, err := in.R.Run(ctx, `. /etc/os-release; echo "$ID $VERSION_ID $(uname -m)"`)
+// blockingWarnings are readiness warnings that stop an install: resources
+// below the documented minimums, and an OS the installer cannot automate.
+var blockingWarnings = map[string]bool{
+	"os": true, "cpus": true, "memory": true, "var_space": true, "tmp_space": true, "shared_space": true,
+}
+
+// Blocking returns the findings that stop an install.
+func Blocking(rep *Report) []Finding {
+	var out []Finding
+	for _, f := range rep.Findings {
+		if f.Level == Fail || (f.Level == Warn && blockingWarnings[f.Check]) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (in *Installer) checkReadiness(ctx context.Context) (State, string, error) {
+	rep, err := Check(ctx, in.R)
 	if err != nil {
 		return "", "", err
 	}
-	f := strings.Fields(res.Stdout)
-	if len(f) != 3 {
-		return Blocked, "could not read /etc/os-release", nil
+	if blocking := Blocking(rep); len(blocking) > 0 {
+		msgs := make([]string, len(blocking))
+		for i, f := range blocking {
+			msgs[i] = f.Check + ": " + f.Detail
+		}
+		return Blocked, strings.Join(msgs, "; "), nil
 	}
-	if f[0] != "ubuntu" || (f[1] != "22.04" && f[1] != "24.04") || f[2] != "x86_64" {
-		return Blocked, fmt.Sprintf("%s %s %s is not supported by fm_host_install (Ubuntu 22.04/24.04 x86_64)", f[0], f[1], f[2]), nil
+	var notes []string
+	for _, f := range rep.Findings {
+		if f.Level == Warn {
+			notes = append(notes, f.Check+": "+f.Detail)
+		}
 	}
-	return Done, fmt.Sprintf("Ubuntu %s %s", f[1], f[2]), nil
+	detail := rep.Facts["os_name"] + " meets the requirements"
+	if len(notes) > 0 {
+		detail += " (advisory: " + strings.Join(notes, "; ") + ")"
+	}
+	return Done, detail, nil
 }
 
 func (in *Installer) checkPrereqs(ctx context.Context) (State, string, error) {

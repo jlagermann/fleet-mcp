@@ -24,6 +24,11 @@ const (
 	EnvLogLevel     = "FLEET_MCP_LOG_LEVEL"
 	EnvWrites       = "FLEET_MCP_ENABLE_WRITES"
 	EnvAuditLog     = "FLEET_MCP_AUDIT_LOG"
+	EnvCertSHA256   = "FLEET_MCP_CERT_SHA256"
+	EnvProfile      = "FLEET_MCP_PROFILE"
+	EnvSecretsDir   = "FLEET_MCP_SECRETS_DIR"
+	EnvSSHUser      = "FLEET_MCP_SSH_USER"
+	EnvSSHBinary    = "FLEET_MCP_SSH"
 )
 
 // Config holds fleet-mcp settings.
@@ -39,7 +44,18 @@ type Config struct {
 	LogLevel           string
 	EnableWrites       bool
 	AuditLog           string
+	// CertSHA256 pins the Fleet Manager certificate instead of verifying a chain.
+	CertSHA256 string
+	// Profile names a host whose installer-written profile supplies URL,
+	// username, password file and pinned certificate.
+	Profile    string
+	SecretsDir string
+	SSHUser    string
+	SSHBinary  string
 }
+
+// FleetConfigured reports whether a Fleet Manager API connection is set up.
+func (c Config) FleetConfigured() bool { return c.URL != "" }
 
 // DataDir is the per-user fleet-mcp directory: ~/.local/share/fleet-mcp.
 func DataDir() string {
@@ -60,13 +76,24 @@ func FromEnv() (Config, error) {
 		SpecDir:      os.Getenv(EnvSpecDir),
 		LogLevel:     os.Getenv(EnvLogLevel),
 		Timeout:      60 * time.Second,
+		CertSHA256:   strings.TrimSpace(os.Getenv(EnvCertSHA256)),
+		Profile:      strings.TrimSpace(os.Getenv(EnvProfile)),
+		SecretsDir:   os.Getenv(EnvSecretsDir),
+		SSHUser:      strings.TrimSpace(os.Getenv(EnvSSHUser)),
+		SSHBinary:    os.Getenv(EnvSSHBinary),
 	}
 	var errs []error
-	if c.URL == "" {
-		errs = append(errs, fmt.Errorf("%s is required (e.g. https://fleet.example.com)", EnvURL))
+	// Without a URL or profile the server runs with host and secret tools only.
+	if c.URL != "" && c.Username == "" {
+		errs = append(errs, fmt.Errorf("%s is required with %s (a local Fleet Manager user without 2FA)", EnvUsername, EnvURL))
 	}
-	if c.Username == "" {
-		errs = append(errs, fmt.Errorf("%s is required (a local Fleet Manager user without 2FA)", EnvUsername))
+	if c.URL != "" && c.Profile != "" {
+		errs = append(errs, fmt.Errorf("set %s or %s, not both", EnvURL, EnvProfile))
+	}
+	if c.SecretsDir == "" {
+		if d := DataDir(); d != "" {
+			c.SecretsDir = filepath.Join(d, "secrets")
+		}
 	}
 	if c.PasswordFile == "" {
 		if d := DataDir(); d != "" {

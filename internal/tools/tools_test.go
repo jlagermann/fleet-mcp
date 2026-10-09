@@ -31,7 +31,7 @@ func sessionWith(t *testing.T, fm *fleettest.Server, configure func(*tools.Deps)
 	if configure != nil {
 		configure(deps)
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions(deps.EnableWrites)})
+	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions(deps.EnableWrites, true)})
 	tools.Register(s, deps)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

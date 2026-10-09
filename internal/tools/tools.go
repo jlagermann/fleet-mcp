@@ -12,6 +12,7 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
+	"github.com/jlagermann/fleet-mcp/internal/secrets"
 	"github.com/jlagermann/fleet-mcp/internal/spec"
 )
 
@@ -30,6 +31,11 @@ type Deps struct {
 	Audit *audit.Log
 	// User is the Fleet Manager username, for audit records.
 	User string
+	// Secrets holds repository tokens, certificates and generated
+	// passwords for host installs; nil disables the host tools.
+	Secrets *secrets.Store
+	// SSHUser and SSHBinary are defaults for host tools.
+	SSHUser, SSHBinary string
 }
 
 func (d *Deps) maxBytes(requested int) int {
@@ -43,12 +49,20 @@ func (d *Deps) maxBytes(requested int) int {
 }
 
 // Instructions returns the text sent to MCP clients at initialization.
-func Instructions(writes bool) string {
-	if writes {
-		return instructions + writeInstructions
+func Instructions(writes, fleetConfigured bool) string {
+	s := instructions
+	if !fleetConfigured {
+		s = "fleet-mcp installs and manages Corelight Fleet Manager (FM). No Fleet Manager is configured for this server (FLEET_MCP_URL or FLEET_MCP_PROFILE), so only the host and secret tools are available."
 	}
-	return instructions + "\n- This server is read-only (writes are not enabled)."
+	s += hostInstructions
+	if writes {
+		return s + writeInstructions
+	}
+	return s + "\n- This server is read-only (writes are not enabled)."
 }
+
+const hostInstructions = `
+- Installing Fleet Manager: run fm_host_check on the host, then fm_secrets_status. The user supplies their own Corelight repository token and product identity certificate: tokens at a hidden terminal prompt (fleet-mcp secret set repo-token) and files with fm_secret_import_file. Never ask for tokens or passwords in the chat. Then fm_host_install (preview, approval, confirm).`
 
 const writeInstructions = `
 - Changes (fm_api_write, fm_graphql_mutate) take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send the confirming call without that approval, and preview again if anything in the request changes.
@@ -116,9 +130,17 @@ func readOnly(title string) *mcp.ToolAnnotations {
 
 // Register adds every tool to s.
 func Register(s *mcp.Server, d *Deps) {
-	registerRead(s, d)
-	registerGeneric(s, d)
-	if d.EnableWrites {
-		registerWrite(s, d)
+	if d.Client != nil {
+		registerRead(s, d)
+		registerGeneric(s, d)
+		if d.EnableWrites {
+			registerWrite(s, d)
+		}
+	}
+	if d.Secrets != nil {
+		registerHost(s, d)
+		if d.EnableWrites {
+			registerHostWrite(s, d)
+		}
 	}
 }

@@ -4,8 +4,10 @@ package fleet
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,11 @@ type Options struct {
 	Timeout time.Duration
 	// UserAgent sent with every request.
 	UserAgent string
+	// Password is used when PasswordFile is empty (bootstrap only).
+	Password string
+	// PinSHA256 accepts exactly the server certificate with this SHA-256
+	// fingerprint (hex, colons optional) instead of verifying a chain.
+	PinSHA256 string
 }
 
 // Client talks to one Fleet Manager. It logs in on first use and logs in
@@ -53,11 +60,14 @@ type Client struct {
 	base         *url.URL
 	username     string
 	passwordFile string
+	password     string
 	userAgent    string
 	http         *http.Client
 
 	mu    sync.Mutex
 	token string
+	// mustChangePassword is the last login's require_password_change.
+	mustChangePassword bool
 }
 
 // Response is a raw API response.
@@ -97,10 +107,28 @@ func New(opts Options) (*Client, error) {
 	if opts.Username == "" {
 		return nil, errors.New("fleet: username is required")
 	}
-	if opts.PasswordFile == "" {
+	if opts.PasswordFile == "" && opts.Password == "" {
 		return nil, errors.New("fleet: password file is required")
 	}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: opts.InsecureSkipVerify} //nolint:gosec // opt-in
+	if opts.PinSHA256 != "" {
+		pin, err := normalizeFingerprint(opts.PinSHA256)
+		if err != nil {
+			return nil, err
+		}
+		// Chain verification is replaced by an exact certificate match.
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec // pinned below
+		tlsCfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("fleet: server sent no certificate")
+			}
+			sum := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			if got := hex.EncodeToString(sum[:]); got != pin {
+				return fmt.Errorf("fleet: server certificate %s does not match the pinned %s", got, pin)
+			}
+			return nil
+		}
+	}
 	if opts.CAFile != "" {
 		pem, err := os.ReadFile(opts.CAFile)
 		if err != nil {
@@ -133,6 +161,7 @@ func New(opts Options) (*Client, error) {
 		base:         base,
 		username:     opts.Username,
 		passwordFile: opts.PasswordFile,
+		password:     opts.Password,
 		userAgent:    ua,
 		http:         &http.Client{Transport: transport, Jar: jar, Timeout: timeout},
 	}, nil
@@ -165,7 +194,35 @@ func ParseBaseURL(raw string) (*url.URL, error) {
 // Host returns the Fleet Manager host name.
 func (c *Client) Host() string { return c.base.Host }
 
+// normalizeFingerprint returns a SHA-256 fingerprint as lowercase hex
+// without separators.
+func normalizeFingerprint(s string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.LastIndex(s, "="); i >= 0 { // "sha256 Fingerprint=AB:CD..."
+		s = s[i+1:]
+	}
+	s = strings.NewReplacer(":", "", " ", "").Replace(s)
+	if b, err := hex.DecodeString(s); err != nil || len(b) != sha256.Size {
+		return "", fmt.Errorf("fleet: bad SHA-256 fingerprint %q", s)
+	}
+	return s, nil
+}
+
+// NormalizeFingerprint is normalizeFingerprint for other packages.
+func NormalizeFingerprint(s string) (string, error) { return normalizeFingerprint(s) }
+
+// RequirePasswordChange reports whether the last login said the user must
+// change their password.
+func (c *Client) RequirePasswordChange() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mustChangePassword
+}
+
 func (c *Client) readPassword() (string, error) {
+	if c.passwordFile == "" {
+		return c.password, nil
+	}
 	b, err := os.ReadFile(c.passwordFile)
 	if err != nil {
 		return "", fmt.Errorf("fleet: reading password file: %w", err)
@@ -231,12 +288,14 @@ func (c *Client) loginLocked(ctx context.Context) error {
 		return &APIError{Method: http.MethodPost, Path: loginPath, Status: resp.StatusCode, Body: excerpt(rb)}
 	}
 	var lr struct {
-		Token string `json:"token"`
+		Token                 string `json:"token"`
+		RequirePasswordChange bool   `json:"require_password_change"`
 	}
 	if err := json.Unmarshal(rb, &lr); err != nil || lr.Token == "" {
 		return errors.New("fleet: login response had no token")
 	}
 	c.token = lr.Token
+	c.mustChangePassword = lr.RequirePasswordChange
 	return nil
 }
 

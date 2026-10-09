@@ -7,10 +7,23 @@ import (
 )
 
 func TestFromEnvRequired(t *testing.T) {
+	// No Fleet Manager at all is valid: host and secret tools only.
 	t.Setenv(EnvURL, "")
 	t.Setenv(EnvUsername, "")
-	_, err := FromEnv()
-	if err == nil || !strings.Contains(err.Error(), EnvURL) || !strings.Contains(err.Error(), EnvUsername) {
+	t.Setenv(EnvProfile, "")
+	c, err := FromEnv()
+	if err != nil || c.FleetConfigured() {
+		t.Fatalf("no URL: %+v, %v", c, err)
+	}
+	// A URL needs a username.
+	t.Setenv(EnvURL, "fleet.example.com")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), EnvUsername) {
+		t.Fatalf("err = %v", err)
+	}
+	// URL and profile are exclusive.
+	t.Setenv(EnvUsername, "u")
+	t.Setenv(EnvProfile, "h")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), EnvProfile) {
 		t.Fatalf("err = %v", err)
 	}
 }

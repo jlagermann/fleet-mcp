@@ -1,0 +1,189 @@
+package install
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+	"unicode"
+
+	"github.com/jlagermann/fleet-mcp/internal/host"
+	"github.com/jlagermann/fleet-mcp/internal/secrets"
+)
+
+func TestGrade(t *testing.T) {
+	facts := map[string]string{
+		"os_id": "ubuntu", "os_version": "22.04", "os_name": "Ubuntu 22.04.5 LTS", "arch": "x86_64",
+		"cpus": "4", "mem_mb": "7900", "var_free_gb": "21", "tmp_free_gb": "21", "var_fs": "/", "tmp_fs": "/",
+		"port_443": "free", "port_1443": "nginx", "repo_http": "401", "fleet_pkg": "",
+	}
+	rep := Grade(facts)
+	levels := map[string]Level{}
+	for _, f := range rep.Findings {
+		levels[f.Check] = f.Level
+	}
+	want := map[string]Level{"os": Pass, "arch": Pass, "cpus": Pass, "memory": Pass, "var_space": Warn, "tmp_space": Pass,
+		"shared_space": Warn, "port_443": Pass, "port_1443": Fail, "repository": Pass}
+	for k, v := range want {
+		if levels[k] != v {
+			t.Errorf("%s = %s, want %s", k, levels[k], v)
+		}
+	}
+	if rep.Ready {
+		t.Error("port conflict should make the host not ready")
+	}
+	facts["port_1443"] = "free"
+	facts["mem_mb"] = "4000"
+	facts["os_version"] = "20.04"
+	rep = Grade(facts)
+	if rep.Ready {
+		t.Error("Ubuntu 20.04 should fail")
+	}
+}
+
+func TestParseTempPassword(t *testing.T) {
+	out := "User \"admin\" successfully created.\n\nUser info:\n   ID:          19a3312c\n   Password:    alm2iepoa19(.\n   FleetAdmin:  true\n"
+	if pw, ok := ParseTempPassword(out); !ok || pw != "alm2iepoa19(." {
+		t.Fatalf("got %q %v", pw, ok)
+	}
+	if _, ok := ParseTempPassword("error: user exists"); ok {
+		t.Fatal("parsed a password from an error")
+	}
+}
+
+func TestGenerate(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		p := Generate(24, true)
+		if len(p) != 24 || seen[p] || strings.ContainsAny(p, " '\"\\`$") {
+			t.Fatalf("bad password %q", p)
+		}
+		seen[p] = true
+		var lo, up, di, sy bool
+		for _, r := range p {
+			switch {
+			case unicode.IsLower(r):
+				lo = true
+			case unicode.IsUpper(r):
+				up = true
+			case unicode.IsDigit(r):
+				di = true
+			default:
+				sy = true
+			}
+		}
+		if !lo || !up || !di || !sy {
+			t.Fatalf("missing a character class: %q", p)
+		}
+	}
+	if strings.ContainsAny(Generate(40, false), "!@#%^*-_=+") {
+		t.Fatal("symbols in a no-symbol string")
+	}
+}
+
+func TestDesiredConfKeepsUnknownKeys(t *testing.T) {
+	var conf map[string]any
+	_ = json.Unmarshal([]byte(`{"log-level":"DEBUG","tacacs-plus":{"enable":false},"messaging":{"community-string":"","http-options":{"bind-address":":2443"}}}`), &conf)
+	yes := true
+	in := &Installer{Opts: Options{ExposeSwagger: &yes}}
+	got := in.desiredConf(conf, "abc")
+	b, _ := json.Marshal(got)
+	s := string(b)
+	for _, want := range []string{`"log-level":"DEBUG"`, `"tacacs-plus":{"enable":false}`, `"community-string":"abc"`, `"bind-address":":2443"`, `"expose-swagger":true`, `"ssl-key-path":"/etc/corelight-fleetd.pem"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+	if communityFrom(conf) != "" {
+		t.Error("input was modified")
+	}
+	no := false
+	in.Opts.ExposeSwagger = &no
+	conf["expose-swagger"] = true
+	if _, ok := in.desiredConf(conf, "abc")["expose-swagger"]; ok {
+		t.Error("expose-swagger not removed")
+	}
+}
+
+// fakeRunner answers scripts by substring.
+type fakeRunner struct {
+	answers map[string]string // substring -> stdout
+	scripts []string
+}
+
+func (f *fakeRunner) Name() string { return "fake" }
+func (f *fakeRunner) Run(_ context.Context, script string, secretVals ...string) (*host.Result, error) {
+	f.scripts = append(f.scripts, script)
+	for k, v := range f.answers {
+		if strings.Contains(script, k) {
+			return &host.Result{Stdout: host.Mask(v, secretVals...)}, nil
+		}
+	}
+	return &host.Result{}, nil
+}
+
+func TestPlanBlocksWithoutSecrets(t *testing.T) {
+	st, err := secrets.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &fakeRunner{answers: map[string]string{
+		"/etc/os-release": "ubuntu 22.04 x86_64\n",
+		"dpkg-query -W -f='${Status}\\n' curl": "0\n",
+	}}
+	in := &Installer{R: r, Secrets: st, Host: "test-host", Opts: Options{}}
+	plan, err := in.Plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]State{}
+	for _, s := range plan {
+		states[s.Step] = s.State
+	}
+	if states["os"] != Done || states["prerequisites"] != Pending || states["repo_key"] != Blocked || states["mcp_user"] != Pending {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if !strings.Contains(plan[2].Detail, "fleet-mcp secret set repo-token") {
+		t.Fatalf("blocked detail = %q", plan[2].Detail)
+	}
+	// Planning must not change the host.
+	for _, s := range r.scripts {
+		if strings.Contains(s, "apt-get install") || strings.Contains(s, "install -m") {
+			t.Fatalf("plan ran a change: %s", s)
+		}
+	}
+}
+
+func TestPlanRefusesUnsupportedOS(t *testing.T) {
+	st, _ := secrets.Open(t.TempDir())
+	r := &fakeRunner{answers: map[string]string{"/etc/os-release": "rocky 9.4 x86_64\n"}}
+	in := &Installer{R: r, Secrets: st, Host: "h"}
+	plan, err := in.Plan(context.Background())
+	if err != nil || plan[0].State != Blocked {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+}
+
+func TestOptionsValidate(t *testing.T) {
+	for _, o := range []Options{{Version: "29.2; rm -rf /"}, {MCPUser: "admin"}, {MCPUser: "a b"}} {
+		if err := o.Validate(); err == nil {
+			t.Errorf("%+v accepted", o)
+		}
+	}
+	o := Options{Version: "29.2.2"}
+	if err := o.Validate(); err != nil || o.MCPUser != "fleet-mcp" {
+		t.Fatalf("%+v %v", o, err)
+	}
+}
+
+func TestTokenScriptKeepsTokenOffCommandLines(t *testing.T) {
+	s := tokenScript("abc123TOKEN")
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "abc123TOKEN") && strings.Contains(line, "curl") {
+			t.Fatalf("token on a curl command line: %s", line)
+		}
+	}
+	if !strings.Contains(s, "<<'FLEET_MCP_EOF'") {
+		t.Fatal("token not in a quoted heredoc")
+	}
+}

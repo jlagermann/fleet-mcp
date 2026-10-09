@@ -13,7 +13,7 @@ const Mask = "[REDACTED]"
 
 // sensitiveKey matches object keys whose values are secrets, for example
 // a sensor's "doc-password" or "tethering_token".
-var sensitiveKey = regexp.MustCompile(`(?i)(pass(word|wd|phrase)|secret|token|credential|private[-_.]?key|api[-_.]?key|access[-_.]?key|oinkcode|license[-_.]?key|^key$|^cookie$|^authorization$)`)
+var sensitiveKey = regexp.MustCompile(`(?i)(pass(word|wd|phrase)|secret|token|credential|private[-_.]?key|api[-_.]?key|access[-_.]?key|oinkcode|license[-_.]?key|passcode|(^|[-_.])otp($|[-_.])|recovery[-_.]?code|^key$|^cookie$|^authorization$)`)
 
 // sensitiveParam matches URL query parameter names that carry secrets.
 var sensitiveParam = regexp.MustCompile(`(?i)(pass|secret|token|key|code|auth|sig|credential)`)

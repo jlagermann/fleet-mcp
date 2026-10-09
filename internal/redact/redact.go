@@ -13,7 +13,7 @@ const Mask = "[REDACTED]"
 
 // sensitiveKey matches object keys whose values are secrets, for example
 // a sensor's "doc-password" or "tethering_token".
-var sensitiveKey = regexp.MustCompile(`(?i)(pass(word|wd|phrase)|secret|token|credential|private[-_.]?key|api[-_.]?key|access[-_.]?key|oinkcode|license[-_.]?key|passcode|(^|[-_.])otp($|[-_.])|recovery[-_.]?code|^key$|^cookie$|^authorization$)`)
+var sensitiveKey = regexp.MustCompile(`(?i)(pass(word|wd|phrase)|secret|token|credential|private[-_.]?key|api[-_.]?key|access[-_.]?key|oinkcode|license[-_.]?key|passcode|(^|[-_.])otp($|[-_.])|recovery[-_.]?code|^key$|^cookie$|^authorization$|^headers$)`)
 
 // sensitiveParam matches URL query parameter names that carry secrets.
 var sensitiveParam = regexp.MustCompile(`(?i)(pass|secret|token|key|code|auth|sig|credential)`)
@@ -22,7 +22,7 @@ var urlPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
 // licensedPathHosts are rule-feed hosts that put a license code in the
 // first path segment, for example https://rules.emergingthreatspro.com/<code>/...
-var licensedPathHosts = []string{"emergingthreatspro.com"}
+var licensedPathHosts = []string{"emergingthreatspro.com", "rules.corelight.io"}
 
 // SensitiveKey reports whether an object key names a secret.
 func SensitiveKey(k string) bool { return sensitiveKey.MatchString(k) }

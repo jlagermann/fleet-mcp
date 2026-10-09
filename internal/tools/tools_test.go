@@ -243,3 +243,13 @@ func TestCheckReadOnlyGraphQL(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyListsAreArrays(t *testing.T) {
+	fm := fakeFleet(t)
+	fm.Route("GET /fleet/v1/sensor/policy/list", []any{})
+	cs := session(t, fm)
+	out, isErr := call(t, cs, "fm_policies_list", nil)
+	if isErr || strings.TrimSpace(out) != "[]" {
+		t.Fatalf("got %q (error %v), want []", out, isErr)
+	}
+}

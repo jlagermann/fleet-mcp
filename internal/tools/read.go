@@ -126,7 +126,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 		if err != nil {
 			return nil, nil, err
 		}
-		var rows []any
+		rows := []any{}
 		for _, el := range asList(cat) {
 			sm, ok := el.(map[string]any)
 			if !ok {
@@ -187,7 +187,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 		if err != nil {
 			return nil, nil, err
 		}
-		var rows []any
+		rows := []any{}
 		for _, el := range asList(v) {
 			g, ok := el.(map[string]any)
 			if !ok {
@@ -216,7 +216,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 		if err != nil {
 			return nil, nil, err
 		}
-		var rows []any
+		rows := []any{}
 		for _, el := range asList(v) {
 			p, ok := el.(map[string]any)
 			if !ok {
@@ -271,7 +271,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 		if err != nil {
 			return nil, nil, err
 		}
-		var rows []any
+		rows := []any{}
 		for _, el := range asList(v) {
 			p, ok := el.(map[string]any)
 			if !ok {
@@ -331,7 +331,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 			return nil, nil, err
 		}
 		byUID := d.sensorNames(ctx, c)
-		var rows []any
+		rows := []any{}
 		for _, el := range asList(v) {
 			if m, ok := el.(map[string]any); ok {
 				m["name"] = byUID[fmt.Sprint(m["uid"])]

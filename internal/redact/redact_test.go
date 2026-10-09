@@ -27,11 +27,13 @@ func TestValue(t *testing.T) {
 		"private_key":         "-----BEGIN",
 		"api-key":             "k",
 		"suricata-yaml-file-id": float64(73093),
+		"headers":             `{"Authorization":["Bearer etpro-secret"]}`,
+		"etpro":               "https://ppp.rules.corelight.io/CodeXYZ123/suricata-7.0.3/etpro.rules.tar.gz",
 	}
 	out := Value(in).(map[string]any)
 	b, _ := json.Marshal(out)
 	s := string(b)
-	for _, leaked := range []string{"abc-123", "eyJhbGciOi", `"x"`, "1234567890abcdef", "Bearer x", `"abc"`, "BEGIN", `"k"`} {
+	for _, leaked := range []string{"abc-123", "eyJhbGciOi", `"x"`, "1234567890abcdef", "Bearer x", `"abc"`, "BEGIN", `"k"`, "etpro-secret", "CodeXYZ123"} {
 		if strings.Contains(s, leaked) {
 			t.Errorf("leaked %s in %s", leaked, s)
 		}
@@ -60,6 +62,7 @@ func TestString(t *testing.T) {
 		"see https://user:pw@host.example/x for details": "see https://" + Mask + "@host.example/x for details",
 		"https://example.com/rules?oinkcode=abc&v=2":     "https://example.com/rules?oinkcode=" + Mask + "&v=2",
 		"https://rules.emergingthreatspro.com/abc123/suricata/etpro.rules.tar.gz": "https://rules.emergingthreatspro.com/" + Mask + "/suricata/etpro.rules.tar.gz",
+		"https://ppp.rules.corelight.io/Abc123XYZ/suricata-7.0.3/etpro.rules.tar.gz": "https://ppp.rules.corelight.io/" + Mask + "/suricata-7.0.3/etpro.rules.tar.gz",
 	} {
 		if got := String(in); got != want {
 			t.Errorf("String(%q) = %q, want %q", in, got, want)

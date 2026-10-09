@@ -144,7 +144,7 @@ func Checklist(ctx context.Context, store *secrets.Store, hostName string, r hos
 	add(Item{"Your choices", "Fleet Manager version (default: newest in the repository)", false, Decide, "", "Pass version, e.g. 29.2.2, to pin one."})
 	add(Item{"Your choices", "Agent user name (default claude): the Fleet Manager admin user the agent logs in as; its password is generated and kept only by fleet-mcp", false, Decide, "", "Pass agent_user to choose another name."})
 	add(Item{"Your choices", "Address you will use for Fleet Manager (default https://<host>); a DNS name is better for a lasting install", false, Decide, "", "Pass url if this machine should reach it by another name."})
-	add(Item{"Your choices", "Serve the REST API spec (expose-swagger; default off, as in production)", false, Decide, "", "Pass expose_swagger true to enable it."})
+	add(Item{"Your choices", "Serve the REST API spec (expose-swagger; default on, so fleet-mcp can describe and check API calls; Fleet Manager serves no REST spec without it)", false, Decide, "", "Pass expose_swagger false to leave it off."})
 	add(Item{"After the install", "You receive the admin user's temporary password; Fleet Manager requires a new one at first login. fleet-mcp keeps no admin password.", true, Note, "",
 		"Log in at the Fleet Manager address as admin right after the install and set your password."})
 	return items, nil

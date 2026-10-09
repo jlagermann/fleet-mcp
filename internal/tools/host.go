@@ -164,7 +164,7 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 	type installArgs struct {
 		hostArgs
 		Version       string `json:"version,omitempty" jsonschema:"corelight-fleet version to install, e.g. 29.2.2 (default: newest)"`
-		ExposeSwagger *bool  `json:"expose_swagger,omitempty" jsonschema:"set expose-swagger in corelight-fleetd.conf (serves the REST API spec); omit to leave unchanged"`
+		ExposeSwagger *bool  `json:"expose_swagger,omitempty" jsonschema:"serve the REST API spec (expose-swagger in corelight-fleetd.conf); default true, because Fleet Manager otherwise serves no REST spec; false removes it"`
 		MCPUser       string `json:"agent_user,omitempty" jsonschema:"Fleet Manager admin user the agent logs in as, created by the install (default claude); the install also creates the admin user for you"`
 		URL           string `json:"url,omitempty" jsonschema:"URL this machine uses to reach the new Fleet Manager (default https://<host>)"`
 		ConfirmToken  string `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this install's preview; when it matches, the plan is executed"`

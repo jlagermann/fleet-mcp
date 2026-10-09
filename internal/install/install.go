@@ -37,8 +37,10 @@ type Options struct {
 	// Version pins corelight-fleet, e.g. "29.2.2" (prefix match); empty
 	// installs the newest.
 	Version string `json:"version,omitempty"`
-	// ExposeSwagger sets "expose-swagger" in corelight-fleetd.conf; nil
-	// leaves it as it is.
+	// ExposeSwagger sets "expose-swagger" in corelight-fleetd.conf. It
+	// defaults to true: without it Fleet Manager serves no REST API spec
+	// (GraphQL introspection works either way), and fleet-mcp uses the
+	// spec to describe and check API calls.
 	ExposeSwagger *bool `json:"expose_swagger,omitempty"`
 	// MCPUser is the local Fleet Manager user created for fleet-mcp.
 	MCPUser string `json:"agent_user"`
@@ -57,6 +59,10 @@ var userPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$`)
 func (o *Options) Validate() error {
 	if o.Version != "" && !versionPattern.MatchString(o.Version) {
 		return fmt.Errorf("bad version %q", o.Version)
+	}
+	if o.ExposeSwagger == nil {
+		yes := true
+		o.ExposeSwagger = &yes
 	}
 	if o.MCPUser == "" {
 		o.MCPUser = DefaultAgentUser
@@ -158,8 +164,14 @@ func writeFileScript(path, content, mode, owner string) string {
 		b.WriteString(enc[i:end])
 		b.WriteByte('\n')
 	}
-	return fmt.Sprintf("tmp=$(mktemp)\n%s | base64 -d > \"$tmp\"\ninstall -m %s -o %s -g %s \"$tmp\" %s\nrm -f \"$tmp\"\n",
-		strings.TrimSuffix(host.Heredoc(b.String()), "\n"), mode, strings.Split(owner, ":")[0], strings.Split(owner, ":")[1], host.Quote(path))
+	// The pipe belongs on the heredoc's first line; the end marker must
+	// stay alone on its own line.
+	h := host.Heredoc(b.String())
+	nl := strings.IndexByte(h, '\n')
+	h = h[:nl] + ` | base64 -d > "$tmp"` + h[nl:]
+	user, group, _ := strings.Cut(owner, ":")
+	return fmt.Sprintf("tmp=$(mktemp)\n%sinstall -m %s -o %s -g %s \"$tmp\" %s\nrm -f \"$tmp\"\necho %s | sha256sum -c --quiet || { echo 'written file does not match' >&2; exit 1; }\n",
+		h, mode, user, group, host.Quote(path), host.Quote(sha(content)+"  "+path))
 }
 
 // Generate returns a random password: letters, digits and a few symbols,
@@ -285,6 +297,16 @@ func (in *Installer) Execute(ctx context.Context) ([]StepStatus, error) {
 			return out, fmt.Errorf("%s: %s", s.name, detail)
 		}
 		applied, err := s.apply(ctx)
+		if err == nil {
+			// Never trust an apply on its own: the step's check must now
+			// pass, or the step failed.
+			var after State
+			var why string
+			after, why, err = s.check(ctx)
+			if err == nil && after != Done {
+				err = fmt.Errorf("the change reported success but the check still says %s: %s", after, why)
+			}
+		}
 		if err != nil {
 			st.State, st.Detail = Failed, err.Error()
 			out = append(out, st)
@@ -387,7 +409,8 @@ func (in *Installer) checkKey(ctx context.Context) (State, string, error) {
 // tokenScript defines $TOKEN from a heredoc and $NETRC as a netrc for the
 // repository, so the token never appears in a command line.
 func tokenScript(tok string) string {
-	return "TOKEN=$(" + strings.TrimSuffix(host.Heredoc(tok), "\n") + ")\n" +
+	// The heredoc end marker must stay alone on its line, so ")" follows it.
+	return "TOKEN=$(" + host.Heredoc(tok) + ")\n" +
 		"NETRC=$(mktemp); chmod 600 \"$NETRC\"; trap 'rm -f \"$NETRC\"' EXIT\n" +
 		"printf 'machine pkgrepos.corelight.cloud login %s password irrelevant\\n' \"$TOKEN\" > \"$NETRC\"\n"
 }
@@ -399,7 +422,7 @@ func (in *Installer) applyKey(ctx context.Context) (string, error) {
 	}
 	script := tokenScript(tok) + fmt.Sprintf(`install -d -m 0755 /etc/apt/keyrings
 tmp=$(mktemp)
-code=$(curl -sS --netrc-file "$NETRC" -o "$tmp" -w '%%{http_code}' %s)
+code=$(curl -sSL --netrc-file "$NETRC" -o "$tmp" -w '%%{http_code}' %s)
 if [ "$code" != 200 ]; then echo "key download failed: HTTP $code (check the repo-token)" >&2; exit 1; fi
 gpg --dearmor < "$tmp" > "$tmp.gpg"
 install -m 0644 "$tmp.gpg" %s

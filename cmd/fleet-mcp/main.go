@@ -436,14 +436,14 @@ func readSecret(spec secrets.Spec) (string, error) {
 
 func hostCmd(args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: fleet-mcp host check <host> | install <host> [-ssh-user u] [-version v] [-expose-swagger] [-agent-user u] [-execute]")
+		return errors.New("usage: fleet-mcp host check <host> | install <host> [-ssh-user u] [-version v] [-no-expose-swagger] [-agent-user u] [-execute]")
 	}
 	sub, target := args[0], args[1]
 	fs := flag.NewFlagSet("host "+sub, flag.ContinueOnError)
 	sshUser := fs.String("ssh-user", "", "SSH user with passwordless sudo")
 	sshPort := fs.Int("ssh-port", 0, "SSH port")
 	ver := fs.String("version", "", "corelight-fleet version (default newest)")
-	swagger := fs.Bool("expose-swagger", false, "set expose-swagger: true")
+	noSwagger := fs.Bool("no-expose-swagger", false, "leave expose-swagger off (default: on, so the REST API spec is served)")
 	mcpUser := fs.String("agent-user", "", "Fleet Manager user to create for the agent (default claude)")
 	url := fs.String("url", "", "URL to reach Fleet Manager (default https://<host>)")
 	execute := fs.Bool("execute", false, "run the installation (default: preview only)")
@@ -487,8 +487,9 @@ func hostCmd(args []string) error {
 			return errors.New("no secret store directory")
 		}
 		opts := install.Options{Version: *ver, MCPUser: *mcpUser, URL: *url}
-		if *swagger {
-			opts.ExposeSwagger = swagger
+		if *noSwagger {
+			off := false
+			opts.ExposeSwagger = &off
 		}
 		in := &install.Installer{R: r, Secrets: e.secrets, Host: target, Opts: opts, Bootstrap: &install.APIBootstrap{UserAgent: "fleet-mcp/" + version}}
 		var steps []install.StepStatus

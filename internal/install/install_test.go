@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode"
@@ -251,8 +252,13 @@ func TestOptionsValidate(t *testing.T) {
 		}
 	}
 	o := Options{Version: "29.2.2"}
-	if err := o.Validate(); err != nil || o.MCPUser != DefaultAgentUser {
-		t.Fatalf("%+v %v", o, err)
+	if err := o.Validate(); err != nil || o.MCPUser != DefaultAgentUser || o.ExposeSwagger == nil || !*o.ExposeSwagger {
+		t.Fatalf("defaults: %+v %v", o, err)
+	}
+	off := false
+	o = Options{ExposeSwagger: &off}
+	if err := o.Validate(); err != nil || *o.ExposeSwagger {
+		t.Fatalf("explicit false was overridden: %+v", o)
 	}
 }
 
@@ -293,5 +299,52 @@ func TestChecklist(t *testing.T) {
 	}
 	if ChecklistReady(items) {
 		t.Fatal("ready without the identity certificate")
+	}
+}
+
+// TestTokenScriptInBash runs the generated fragment in a real shell: the
+// heredoc must terminate and $TOKEN and the netrc must hold the token.
+func TestTokenScriptInBash(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	tok := "abcDEF0123456789xyz"
+	script := tokenScript(tok) + "printf 'T=%s\n' \"$TOKEN\"; cat \"$NETRC\"\n"
+	out, err := exec.Command(bash, "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	s := string(out)
+	if strings.Contains(s, "here-document") || !strings.Contains(s, "T="+tok+"\n") ||
+		!strings.Contains(s, "machine pkgrepos.corelight.cloud login "+tok+" password irrelevant") {
+		t.Fatalf("output:\n%s", s)
+	}
+}
+
+// TestWriteFileScriptInBash writes a file with the generated script in a
+// real shell and checks the content arrives intact.
+func TestWriteFileScriptInBash(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		t.Skip("sha256sum not available")
+	}
+	who, err := exec.Command(bash, "-c", "printf %s:%s \"$(id -un)\" \"$(id -gn)\"").Output()
+	if err != nil {
+		t.Skip("id not available")
+	}
+	path := t.TempDir() + "/out.conf"
+	content := "line one with FLEET_MCP_EOF in it\n{\"json\": true}\n"
+	script := "set -e\n" + writeFileScript(path, content, "0640", string(who)) + "echo DONE\n"
+	out, err := exec.Command(bash, "-c", script).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "DONE") || strings.Contains(string(out), "here-document") {
+		t.Fatalf("%v: %s", err, out)
+	}
+	got, err := exec.Command("cat", path).Output()
+	if err != nil || string(got) != content {
+		t.Fatalf("file = %q, %v", got, err)
 	}
 }

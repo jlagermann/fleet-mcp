@@ -14,8 +14,6 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/secrets"
 )
 
-
-
 // APIBootstrap finishes setup through the Fleet Manager REST API. It pins
 // the certificate Fleet Manager serves, read over SSH, because a new Fleet
 // Manager presents Corelight's identity certificate, which this machine

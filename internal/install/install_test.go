@@ -129,7 +129,7 @@ func TestPlanBlocksWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &fakeRunner{answers: map[string]string{
-		`echo "os_id=`: goodFacts,
+		`echo "os_id=`:                         goodFacts,
 		"dpkg-query -W -f='${Status}\\n' curl": "0\n",
 	}}
 	in := &Installer{R: r, Secrets: st, Host: "test-host", Opts: Options{}}
@@ -197,7 +197,9 @@ func (f *fakeBootstrap) ActivateMCPUser(_ context.Context, _ *Installer, temp st
 	f.activated = temp
 	return nil
 }
-func (f *fakeBootstrap) AdminExists(context.Context, *Installer) (bool, error) { return f.adminExists, nil }
+func (f *fakeBootstrap) AdminExists(context.Context, *Installer) (bool, error) {
+	return f.adminExists, nil
+}
 
 const created = "User \"%s\" successfully created.\n\nUser info:\n   ID:          19a3\n   Password:    %s\n   FleetAdmin:  true\n"
 
@@ -234,8 +236,8 @@ func TestExistingAdminUntouched(t *testing.T) {
 
 func TestMCPUserResetWhenExisting(t *testing.T) {
 	r := &fakeRunner{answers: map[string]string{
-		"create-user -a 'fleet-mcp'":    "error: user fleet-mcp already exists\n",
-		"reset-password 'fleet-mcp'":    "   Password:    Reset-1x\n",
+		"create-user -a 'fleet-mcp'": "error: user fleet-mcp already exists\n",
+		"reset-password 'fleet-mcp'": "   Password:    Reset-1x\n",
 	}}
 	fb := &fakeBootstrap{}
 	in := &Installer{R: r, Host: "h", Opts: Options{MCPUser: "fleet-mcp"}, Bootstrap: fb}

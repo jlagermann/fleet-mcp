@@ -15,6 +15,7 @@ test:
 
 # staticcheck 0.8.1 cannot read go1.27.2 export data yet; see ci.yml.
 lint:
+	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	go vet ./...
 	GOTOOLCHAIN=go1.27.1 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 

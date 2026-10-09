@@ -18,11 +18,11 @@ func doc(t *testing.T, s string) any {
 func TestGet(t *testing.T) {
 	v := doc(t, `{"list":[{"name":"a","health.status":"ok","x/y":1,"st":{"os.version":"29"}}]}`)
 	for ptr, want := range map[string]string{
-		"/list/0/name":             `"a"`,
-		"list/0/health.status":     `"ok"`,
-		"/list/0/x~1y":             `1`,
-		"/list/0/st/os.version":    `"29"`,
-		"":                         `{"list":[{"health.status":"ok","name":"a","st":{"os.version":"29"},"x/y":1}]}`,
+		"/list/0/name":          `"a"`,
+		"list/0/health.status":  `"ok"`,
+		"/list/0/x~1y":          `1`,
+		"/list/0/st/os.version": `"29"`,
+		"":                      `{"list":[{"health.status":"ok","name":"a","st":{"os.version":"29"},"x/y":1}]}`,
 	} {
 		got, err := Get(v, ptr)
 		if err != nil {

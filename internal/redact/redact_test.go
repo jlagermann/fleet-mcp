@@ -14,21 +14,21 @@ func TestValue(t *testing.T) {
 			"doc-username": "admin",
 			"os.version":   "29.2.2",
 		},
-		"tethering_token":     "eyJhbGciOi",
-		"empty_token":         "",
-		"has-token":           true,
-		"token_count":         float64(3),
-		"client_secret":       map[string]any{"v": "x"},
-		"permission_actions":  "list_secrets,revoke_tokens",
-		"sources":             []any{map[string]any{"url": "https://rules.emergingthreatspro.com/1234567890abcdef/suricata-7.0.3/etpro.rules.tar.gz"}},
-		"Authorization":       "Bearer x",
-		"key":                 "abc",
-		"monkey":              "fine",
-		"private_key":         "-----BEGIN",
-		"api-key":             "k",
+		"tethering_token":       "eyJhbGciOi",
+		"empty_token":           "",
+		"has-token":             true,
+		"token_count":           float64(3),
+		"client_secret":         map[string]any{"v": "x"},
+		"permission_actions":    "list_secrets,revoke_tokens",
+		"sources":               []any{map[string]any{"url": "https://rules.emergingthreatspro.com/1234567890abcdef/suricata-7.0.3/etpro.rules.tar.gz"}},
+		"Authorization":         "Bearer x",
+		"key":                   "abc",
+		"monkey":                "fine",
+		"private_key":           "-----BEGIN",
+		"api-key":               "k",
 		"suricata-yaml-file-id": float64(73093),
-		"headers":             `{"Authorization":["Bearer etpro-secret"]}`,
-		"etpro":               "https://ppp.rules.corelight.io/CodeXYZ123/suricata-7.0.3/etpro.rules.tar.gz",
+		"headers":               `{"Authorization":["Bearer etpro-secret"]}`,
+		"etpro":                 "https://ppp.rules.corelight.io/CodeXYZ123/suricata-7.0.3/etpro.rules.tar.gz",
 	}
 	out := Value(in).(map[string]any)
 	b, _ := json.Marshal(out)
@@ -57,11 +57,11 @@ func TestValueExtraKeys(t *testing.T) {
 
 func TestString(t *testing.T) {
 	for in, want := range map[string]string{
-		"plain text":                                     "plain text",
-		"https://feed.corelight.com/corelight.rules":     "https://feed.corelight.com/corelight.rules",
-		"see https://user:pw@host.example/x for details": "see https://" + Mask + "@host.example/x for details",
-		"https://example.com/rules?oinkcode=abc&v=2":     "https://example.com/rules?oinkcode=" + Mask + "&v=2",
-		"https://rules.emergingthreatspro.com/abc123/suricata/etpro.rules.tar.gz": "https://rules.emergingthreatspro.com/" + Mask + "/suricata/etpro.rules.tar.gz",
+		"plain text": "plain text",
+		"https://feed.corelight.com/corelight.rules":                                 "https://feed.corelight.com/corelight.rules",
+		"see https://user:pw@host.example/x for details":                             "see https://" + Mask + "@host.example/x for details",
+		"https://example.com/rules?oinkcode=abc&v=2":                                 "https://example.com/rules?oinkcode=" + Mask + "&v=2",
+		"https://rules.emergingthreatspro.com/abc123/suricata/etpro.rules.tar.gz":    "https://rules.emergingthreatspro.com/" + Mask + "/suricata/etpro.rules.tar.gz",
 		"https://ppp.rules.corelight.io/Abc123XYZ/suricata-7.0.3/etpro.rules.tar.gz": "https://ppp.rules.corelight.io/" + Mask + "/suricata-7.0.3/etpro.rules.tar.gz",
 	} {
 		if got := String(in); got != want {

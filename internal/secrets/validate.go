@@ -15,16 +15,16 @@ import (
 
 // CertSummary describes a certificate without exposing its key.
 type CertSummary struct {
-	Subject     string    `json:"subject"`
-	Issuer      string    `json:"issuer"`
-	DNSNames    []string  `json:"dns_names,omitempty"`
-	NotBefore   time.Time `json:"not_before"`
-	NotAfter    time.Time `json:"not_after"`
-	DaysLeft    int       `json:"days_left"`
-	SHA256      string    `json:"sha256"`
-	HasKey      bool      `json:"has_private_key"`
-	KeyMatches  bool      `json:"key_matches_certificate"`
-	Certificates int      `json:"certificates_in_file"`
+	Subject      string    `json:"subject"`
+	Issuer       string    `json:"issuer"`
+	DNSNames     []string  `json:"dns_names,omitempty"`
+	NotBefore    time.Time `json:"not_before"`
+	NotAfter     time.Time `json:"not_after"`
+	DaysLeft     int       `json:"days_left"`
+	SHA256       string    `json:"sha256"`
+	HasKey       bool      `json:"has_private_key"`
+	KeyMatches   bool      `json:"key_matches_certificate"`
+	Certificates int       `json:"certificates_in_file"`
 }
 
 // InspectPEM summarizes the first certificate in b and checks for a

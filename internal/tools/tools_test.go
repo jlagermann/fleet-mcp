@@ -75,7 +75,7 @@ func fakeFleet(t *testing.T) *fleettest.Server {
 			map[string]any{
 				"uid": "0a-1b-2c-3d-4e-5f-60-71", "name": "Lab-Sensor1", "health.status": "healthy",
 				"extendedinformation.status": map[string]any{"os.version": "29.2.2", "doc-password": "leak-me"},
-				"tethering_token": "tok-leak", "services.failed": []any{},
+				"tethering_token":            "tok-leak", "services.failed": []any{},
 			},
 			map[string]any{"uid": "aa-bb-cc-dd-ee-ff-00-11", "name": "Lab-Sensor2", "health.status": "failure"},
 		},
@@ -229,14 +229,14 @@ func TestInfoAndDescribeWithoutSchemas(t *testing.T) {
 
 func TestCheckReadOnlyGraphQL(t *testing.T) {
 	for doc, ok := range map[string]bool{
-		"{ a }":                         true,
-		"query Q { a }":                 true,
-		"query A { a } query B { b }":   true,
-		"mutation { x }":                false,
+		"{ a }":                          true,
+		"query Q { a }":                  true,
+		"query A { a } query B { b }":    true,
+		"mutation { x }":                 false,
 		"query A { a } mutation B { b }": false,
-		"subscription { s }":            false,
-		"{ unclosed":                    false,
-		"":                              false,
+		"subscription { s }":             false,
+		"{ unclosed":                     false,
+		"":                               false,
 	} {
 		if err := tools.CheckReadOnlyGraphQL(doc); (err == nil) != ok {
 			t.Errorf("CheckReadOnlyGraphQL(%q) = %v, want ok=%v", doc, err, ok)

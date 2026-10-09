@@ -1,0 +1,16 @@
+# Downloaded Fleet Manager API specifications (not redistributed)
+/spec/
+
+# Build output
+/bin/
+/dist/
+
+# Local configuration and secrets
+*.local.yaml
+*.env
+*password*.txt
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store

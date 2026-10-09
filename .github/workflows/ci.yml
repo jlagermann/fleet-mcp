@@ -26,7 +26,12 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # staticcheck 0.8.1 cannot read go1.27.2 export data (version 5) yet;
+      # analyze with go1.27.1 until a release supports it. Build, test and
+      # govulncheck still use the go.mod toolchain.
       - name: Staticcheck
+        env:
+          GOTOOLCHAIN: go1.27.1
         run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
       - name: Govulncheck

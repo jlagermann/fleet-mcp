@@ -14,6 +14,12 @@ import (
 )
 
 func session(t *testing.T, fm *fleettest.Server) *mcp.ClientSession {
+	return sessionWith(t, fm, nil)
+}
+
+// sessionWith connects an MCP client to a server whose Deps may be
+// adjusted by configure (e.g. to enable writes).
+func sessionWith(t *testing.T, fm *fleettest.Server, configure func(*tools.Deps)) *mcp.ClientSession {
 	t.Helper()
 	c, err := fleet.New(fleet.Options{
 		BaseURL: fm.URL, Username: fleettest.Username, PasswordFile: fm.PasswordFile, InsecureSkipVerify: true,
@@ -21,8 +27,12 @@ func session(t *testing.T, fm *fleettest.Server) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions})
-	tools.Register(s, &tools.Deps{Client: c, Specs: spec.NewStore(t.TempDir(), c)})
+	deps := &tools.Deps{Client: c, Specs: spec.NewStore(t.TempDir(), c), User: fleettest.Username}
+	if configure != nil {
+		configure(deps)
+	}
+	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions(deps.EnableWrites)})
+	tools.Register(s, deps)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := s.Connect(ctx, st, nil); err != nil {

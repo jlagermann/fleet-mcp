@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
@@ -23,6 +24,12 @@ type Deps struct {
 	Specs  *spec.Store
 	// MaxBytes is the default output cap; 0 means DefaultMaxBytes.
 	MaxBytes int
+	// EnableWrites registers the tools that change Fleet Manager.
+	EnableWrites bool
+	// Audit records executed changes; nil discards them.
+	Audit *audit.Log
+	// User is the Fleet Manager username, for audit records.
+	User string
 }
 
 func (d *Deps) maxBytes(requested int) int {
@@ -35,10 +42,19 @@ func (d *Deps) maxBytes(requested int) int {
 	return DefaultMaxBytes
 }
 
-// Instructions are sent to MCP clients at initialization.
-const Instructions = `fleet-mcp manages a Corelight Fleet Manager (FM).
+// Instructions returns the text sent to MCP clients at initialization.
+func Instructions(writes bool) string {
+	if writes {
+		return instructions + writeInstructions
+	}
+	return instructions + "\n- This server is read-only (writes are not enabled)."
+}
 
-All tools in this build are read-only.
+const writeInstructions = `
+- Changes (fm_api_write, fm_graphql_mutate) take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send the confirming call without that approval, and preview again if anything in the request changes.
+- Executed changes are recorded in an audit log.`
+
+const instructions = `fleet-mcp manages a Corelight Fleet Manager (FM).
 
 - Start with fm_info to see the FM version, the logged-in user and whether the API schemas are available.
 - Named tools (fm_sensors_list, fm_groups_list, fm_policies_list, ...) return compact summaries. Use the matching *_get tool or fm_api_get for full records.
@@ -102,4 +118,7 @@ func readOnly(title string) *mcp.ToolAnnotations {
 func Register(s *mcp.Server, d *Deps) {
 	registerRead(s, d)
 	registerGeneric(s, d)
+	if d.EnableWrites {
+		registerWrite(s, d)
+	}
 }

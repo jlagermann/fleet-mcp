@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server for installing, configuring and managing Corelight Fleet Manager.
 
-> **Status:** early development. This build is **read-only**: it can inspect Fleet Manager but not change it.
+> **Status:** early development. The server is **read-only unless writes are enabled**; the write tools are tested only against a fake Fleet Manager so far.
 
 ## Scope
 
@@ -41,6 +41,8 @@ Settings come from environment variables.
 | `FLEET_MCP_MAX_RESPONSE_BYTES` | `60000` | Default cap on a tool result. |
 | `FLEET_MCP_TIMEOUT` | `60s` | Per-request timeout. |
 | `FLEET_MCP_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs go to stderr. |
+| `FLEET_MCP_ENABLE_WRITES` | `false` | Register the tools that change Fleet Manager. |
+| `FLEET_MCP_AUDIT_LOG` | `~/.local/share/fleet-mcp/audit.jsonl` | JSON Lines record of every executed change (secrets redacted). |
 
 ### Claude Code
 
@@ -67,6 +69,21 @@ claude mcp add fleet-mcp --scope user \
 | `fm_api_get` | GET any REST endpoint |
 | `fm_graphql_query` | Run a GraphQL query (mutations are rejected) |
 | `fm_api_describe` | Search the REST spec and GraphQL schema |
+
+With `FLEET_MCP_ENABLE_WRITES=true`:
+
+| Tool | Description |
+|---|---|
+| `fm_api_write` | POST, PUT, PATCH or DELETE a REST endpoint (JSON bodies) |
+| `fm_graphql_mutate` | Run a GraphQL mutation |
+
+### Changes need two calls
+
+A write tool called without `confirm_token` changes nothing. It returns a **preview**: the request, the matching spec operation, impact warnings (for example, a policy change reaching sensors, or a DELETE that cannot be undone), and for PUT/PATCH a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request. Calling again with the identical request and the token executes it; any other request is refused. The MCP client is expected to show the preview to the user and get approval in between.
+
+Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
+
+In Claude Code, you can also require a permission prompt for these tools with an `ask` rule for `mcp__fleet-mcp__fm_api_write` and `mcp__fleet-mcp__fm_graphql_mutate`.
 
 Results can be narrowed with `select` (a JSON Pointer; Fleet Manager keys often contain dots, as in `/information/health.status`), `fields`, `offset`/`limit` and `max_bytes`.
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/config"
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
@@ -105,13 +106,25 @@ func serve() error {
 	if cfg.InsecureSkipVerify {
 		slog.Warn("TLS certificate verification is disabled")
 	}
+	deps := &tools.Deps{
+		Client: c, Specs: spec.NewStore(cfg.SpecDir, c), MaxBytes: cfg.MaxResponseBytes,
+		EnableWrites: cfg.EnableWrites, User: cfg.Username,
+	}
+	if cfg.EnableWrites {
+		if cfg.AuditLog == "" {
+			return fmt.Errorf("%s needs an audit log path (%s)", config.EnvWrites, config.EnvAuditLog)
+		}
+		if deps.Audit, err = audit.Open(cfg.AuditLog); err != nil {
+			return fmt.Errorf("opening audit log: %w", err)
+		}
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: version}, &mcp.ServerOptions{
-		Instructions: tools.Instructions,
+		Instructions: tools.Instructions(cfg.EnableWrites),
 	})
-	tools.Register(s, &tools.Deps{Client: c, Specs: spec.NewStore(cfg.SpecDir, c), MaxBytes: cfg.MaxResponseBytes})
+	tools.Register(s, deps)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	slog.Info("fleet-mcp starting", "version", version, "fleet", c.Host())
+	slog.Info("fleet-mcp starting", "version", version, "fleet", c.Host(), "writes", cfg.EnableWrites, "audit_log", deps.Audit.Path())
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
 

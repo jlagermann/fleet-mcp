@@ -22,6 +22,8 @@ const (
 	EnvMaxBytes     = "FLEET_MCP_MAX_RESPONSE_BYTES"
 	EnvTimeout      = "FLEET_MCP_TIMEOUT"
 	EnvLogLevel     = "FLEET_MCP_LOG_LEVEL"
+	EnvWrites       = "FLEET_MCP_ENABLE_WRITES"
+	EnvAuditLog     = "FLEET_MCP_AUDIT_LOG"
 )
 
 // Config holds fleet-mcp settings.
@@ -35,6 +37,8 @@ type Config struct {
 	MaxResponseBytes   int
 	Timeout            time.Duration
 	LogLevel           string
+	EnableWrites       bool
+	AuditLog           string
 }
 
 // DataDir is the per-user fleet-mcp directory: ~/.local/share/fleet-mcp.
@@ -74,12 +78,20 @@ func FromEnv() (Config, error) {
 			c.SpecDir = filepath.Join(d, "spec")
 		}
 	}
-	if v := os.Getenv(EnvInsecure); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", EnvInsecure, err))
+	c.AuditLog = os.Getenv(EnvAuditLog)
+	if c.AuditLog == "" {
+		if d := DataDir(); d != "" {
+			c.AuditLog = filepath.Join(d, "audit.jsonl")
 		}
-		c.InsecureSkipVerify = b
+	}
+	for name, dst := range map[string]*bool{EnvInsecure: &c.InsecureSkipVerify, EnvWrites: &c.EnableWrites} {
+		if v := os.Getenv(name); v != "" {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+			}
+			*dst = b
+		}
 	}
 	if v := os.Getenv(EnvMaxBytes); v != "" {
 		n, err := strconv.Atoi(v)

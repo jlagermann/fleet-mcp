@@ -34,6 +34,22 @@ type Server struct {
 	routes   map[string]any // "GET /path" -> JSON body
 	LastGQL  string
 	Requests []string
+	// Bodies holds "METHOD /path body" for non-GET REST requests.
+	Bodies []string
+}
+
+// BodyLog returns the recorded non-GET request bodies.
+func (s *Server) BodyLog() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.Bodies...)
+}
+
+// LastGraphQL returns the last GraphQL document received.
+func (s *Server) LastGraphQL() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LastGQL
 }
 
 // New starts a fake Fleet Manager over TLS.
@@ -154,6 +170,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		b, _ := io.ReadAll(r.Body)
+		s.Bodies = append(s.Bodies, r.Method+" "+r.URL.Path+" "+string(b))
+	}
 	if v, ok := s.routes[r.Method+" "+r.URL.Path]; ok {
 		if b, isBytes := v.([]byte); isBytes {
 			w.Header().Set("Content-Type", "application/gzip")

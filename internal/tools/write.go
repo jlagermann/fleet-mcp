@@ -18,6 +18,7 @@ import (
 
 	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
+	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
 )
@@ -128,6 +129,7 @@ func registerWrite(s *mcp.Server, d *Deps) {
 	}
 
 	type apiWriteArgs struct {
+		target
 		Method       string            `json:"method" jsonschema:"POST, PUT, PATCH or DELETE"`
 		Path         string            `json:"path" jsonschema:"REST path starting with /, path parameters filled in"`
 		Query        map[string]string `json:"query,omitempty" jsonschema:"query string parameters"`
@@ -142,6 +144,10 @@ func registerWrite(s *mcp.Server, d *Deps) {
 			"Any change to the request needs a new preview. Executed changes are written to the audit log. File uploads (multipart) are not supported here.",
 		Annotations: writeAnn("REST write"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a apiWriteArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.writeConn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		method := strings.ToUpper(strings.TrimSpace(a.Method))
 		if err := CheckWritePath(method, a.Path); err != nil {
 			return nil, nil, err
@@ -154,18 +160,18 @@ func registerWrite(s *mcp.Server, d *Deps) {
 			}
 		}
 		q := sortedQuery(a.Query)
-		token := ConfirmToken(d.Client.Host(), "fm_api_write", method, a.Path, q, a.Body)
+		token := ConfirmToken(c.Client.Host(), "fm_api_write", method, a.Path, q, a.Body)
 
 		if a.ConfirmToken == "" {
-			return d.previewREST(ctx, method, a.Path, a.Query, a.Body, token)
+			return d.previewREST(ctx, c, method, a.Path, a.Query, a.Body, token)
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match this request; the request changed since the preview (or the token is from another request). Preview again")
 		}
 
 		qv, _ := url.ParseQuery(q)
-		resp, err := d.Client.Do(ctx, method, a.Path, qv, body, "application/json")
-		rec := audit.Record{Fleet: d.Client.Host(), User: d.User, Tool: "fm_api_write", Method: method, Path: a.Path, Query: q,
+		resp, err := c.Client.Do(ctx, method, a.Path, qv, body, "application/json")
+		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_api_write", Method: method, Path: a.Path, Query: q,
 			Body: redact.Value(a.Body), Token: token}
 		if resp != nil {
 			rec.Status = resp.Status
@@ -196,6 +202,7 @@ func registerWrite(s *mcp.Server, d *Deps) {
 	})
 
 	type gqlMutateArgs struct {
+		target
 		Query        string         `json:"query" jsonschema:"GraphQL document containing one or more mutations"`
 		Variables    map[string]any `json:"variables,omitempty" jsonschema:"GraphQL variables"`
 		ConfirmToken string         `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this mutation's preview; when it matches, the mutation is executed"`
@@ -207,11 +214,15 @@ func registerWrite(s *mcp.Server, d *Deps) {
 			"after the user approves, call again with the identical query and variables plus confirm_token. Executed mutations are written to the audit log.",
 		Annotations: writeAnn("GraphQL mutation"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a gqlMutateArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.writeConn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		fields, err := mutationFields(a.Query)
 		if err != nil {
 			return nil, nil, err
 		}
-		token := ConfirmToken(d.Client.Host(), "fm_graphql_mutate", a.Query, a.Variables)
+		token := ConfirmToken(c.Client.Host(), "fm_graphql_mutate", a.Query, a.Variables)
 		if a.ConfirmToken == "" {
 			var warnings []string
 			for _, fld := range fields {
@@ -232,8 +243,8 @@ func registerWrite(s *mcp.Server, d *Deps) {
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match this mutation; preview again")
 		}
-		resp, err := d.Client.GraphQL(ctx, a.Query, a.Variables)
-		rec := audit.Record{Fleet: d.Client.Host(), User: d.User, Tool: "fm_graphql_mutate", Path: "/graph/query",
+		resp, err := c.Client.GraphQL(ctx, a.Query, a.Variables)
+		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_graphql_mutate", Path: "/graph/query",
 			Body: map[string]any{"query": a.Query, "variables": redact.Value(anyMap(a.Variables))}, Token: token}
 		if resp != nil {
 			rec.Status = resp.Status
@@ -299,13 +310,13 @@ func mutationFields(doc string) ([]string, error) {
 }
 
 // previewREST builds the preview for fm_api_write.
-func (d *Deps) previewREST(ctx context.Context, method, path string, query map[string]string, body any, token string) (*mcp.CallToolResult, any, error) {
+func (d *Deps) previewREST(ctx context.Context, c *fleets.Conn, method, path string, query map[string]string, body any, token string) (*mcp.CallToolResult, any, error) {
 	out := map[string]any{
 		"preview": true,
 		"request": map[string]any{"method": method, "path": path, "query": query, "body": redact.Value(body)},
 	}
 	warnings := impactNotes(method, path)
-	if idx, _, _ := d.Specs.REST(ctx); idx != nil {
+	if idx, _, _ := c.Specs.REST(ctx); idx != nil {
 		if op := idx.Match(method, path); op != nil {
 			out["operation"] = map[string]any{"path": op.Path, "summary": op.Summary, "params": op.Params}
 		} else {
@@ -313,7 +324,7 @@ func (d *Deps) previewREST(ctx context.Context, method, path string, query map[s
 		}
 	}
 	if method == http.MethodPut || method == http.MethodPatch {
-		if diff, note := d.diffAgainstCurrent(ctx, path, body); diff != nil || note != "" {
+		if diff, note := d.diffAgainstCurrent(ctx, c, path, body); diff != nil || note != "" {
 			if diff != nil {
 				out["diff"] = diff
 			}
@@ -333,8 +344,8 @@ func (d *Deps) previewREST(ctx context.Context, method, path string, query map[s
 
 // diffAgainstCurrent GETs path and compares the keys present in body with
 // their current values.
-func (d *Deps) diffAgainstCurrent(ctx context.Context, path string, body any) (any, string) {
-	resp, err := d.Client.GetCapped(ctx, path, nil, apiGetLimit)
+func (d *Deps) diffAgainstCurrent(ctx context.Context, c *fleets.Conn, path string, body any) (any, string) {
+	resp, err := c.Client.GetCapped(ctx, path, nil, apiGetLimit)
 	if err != nil || resp.Truncated || !resp.IsJSON() {
 		return nil, "no diff: the current object could not be read with GET " + path
 	}

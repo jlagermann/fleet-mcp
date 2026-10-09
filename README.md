@@ -150,9 +150,52 @@ Each step checks first and is skipped when already done, so an install that stop
 8. **agent_user**: the local admin user the agent logs in as (default `claude`). Its password is generated and kept only by fleet-mcp.
 9. **admin**: your `admin` user, with a temporary password returned to you. Fleet Manager requires changing it at first login. An existing admin is never changed.
 
-The install writes a profile for the new Fleet Manager. Start a server with `FLEET_MCP_PROFILE=<host>` to manage it: the profile holds its URL, the agent user, the password file and the pinned certificate.
+The install writes a profile for the new Fleet Manager (its URL, the agent user, the password file and the pinned certificate), and it becomes available to the API tools straight away under the host name you installed it on.
 
 To read the community string later, for pairing sensors: `fleet-mcp secret show community-string -host <host>` (prints only in your terminal; `-copy` puts it on the clipboard).
+
+## Several Fleet Managers
+
+One fleet-mcp server can manage any number of Fleet Managers. Every API tool takes an optional `fleet` argument naming the one to use; `fm_fleets` lists them (with `check`, it logs in to each and shows its version). Fleet Managers come from:
+
+1. **Installs by fleet-mcp**: picked up automatically, named after the host.
+2. **`fleets.json`** (`~/.local/share/fleet-mcp/fleets.json`): for Fleet Managers fleet-mcp did not install.
+3. **`FLEET_MCP_URL`** (named after its host) or **`FLEET_MCP_PROFILE`**, for single-FM setups.
+
+```json
+[
+  {
+    "name": "prod",
+    "url": "https://fleet.example.com",
+    "username": "claude",
+    "password_file": "~/.local/share/fleet-mcp/prod-password.txt",
+    "ca_file": "~/certs/corp-ca.pem",
+    "read_only": true
+  },
+  {
+    "name": "lab",
+    "url": "https://fleet-lab.example.com",
+    "username": "claude",
+    "password_file": "~/.local/share/fleet-mcp/lab-password.txt",
+    "cert_sha256": "3f2a9c11…",
+    "default": true
+  }
+]
+```
+
+- `read_only: true` makes every write tool refuse that Fleet Manager; reads still work.
+- The **default** Fleet Manager (used when a call names none) is the one marked `"default": true`, else `FLEET_MCP_DEFAULT_FLEET`, else the environment entry, else the only one. With several and no default, tools ask which one to use.
+- Each Fleet Manager has its own login session and API schema cache. Confirm tokens include the Fleet Manager, so a change previewed on one can't be executed on another, and the audit log records the Fleet Manager of every change.
+
+Sample prompts:
+
+```text
+Which Fleet Managers can you reach, and what version is each running?
+```
+
+```text
+Compare the sensor policies on prod and lab.
+```
 
 ## Configuration
 
@@ -160,10 +203,12 @@ Settings come from environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
-| `FLEET_MCP_URL` | | Fleet Manager URL or host name, e.g. `https://fleet.example.com`. HTTPS only. Without it (or a profile), only the host and secret tools are available. |
+| `FLEET_MCP_URL` | | Fleet Manager URL or host name, e.g. `https://fleet.example.com`. HTTPS only. Optional: one more Fleet Manager, named after its host. |
 | `FLEET_MCP_USERNAME` | | Local Fleet Manager user without 2FA (required with `FLEET_MCP_URL`). |
 | `FLEET_MCP_PASSWORD_FILE` | `~/.local/share/fleet-mcp/fm-password.txt` | File containing only the password. Restrict it to your user. |
-| `FLEET_MCP_PROFILE` | | Host name of a Fleet Manager installed by fleet-mcp; supplies URL, user, password file and pinned certificate. Use instead of `FLEET_MCP_URL`. |
+| `FLEET_MCP_PROFILE` | | Host name of a Fleet Manager installed by fleet-mcp to use as the default. Use instead of `FLEET_MCP_URL`. |
+| `FLEET_MCP_FLEETS_FILE` | `~/.local/share/fleet-mcp/fleets.json` | Fleet Managers fleet-mcp did not install (see Several Fleet Managers). |
+| `FLEET_MCP_DEFAULT_FLEET` | | Name of the default Fleet Manager. |
 | `FLEET_MCP_CERT_SHA256` | | Pin the Fleet Manager certificate by its SHA-256 fingerprint instead of verifying a chain. |
 | `FLEET_MCP_CA_FILE` | | PEM file of extra CA certificates, for a Fleet Manager with a private CA. |
 | `FLEET_MCP_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification. Not recommended. |
@@ -189,10 +234,11 @@ Host and secret tools (always available):
 | `fm_secret_import_file` | Import the identity certificate or a Software Sensor license from a file |
 | `fm_host_install` | Install and set up Fleet Manager (writes enabled; preview, then confirm) |
 
-Fleet Manager API tools (with `FLEET_MCP_URL` or `FLEET_MCP_PROFILE`):
+Fleet Manager API tools (each takes an optional `fleet` argument):
 
 | Tool | Description |
 |---|---|
+| `fm_fleets` | The Fleet Managers this server can manage; with `check`, reachability and versions |
 | `fm_info` | Fleet Manager version and features, the logged-in user, schema availability |
 | `fm_sensors_list` | One summary row per sensor: health, connection, version, group, policy, config-apply state |
 | `fm_sensor_get` | Full detail for one sensor (by uid or name) |
@@ -240,9 +286,10 @@ fleet-mcp secret list [host]                # stored secrets (never values)
 fleet-mcp secret set repo-token             # hidden prompt
 fleet-mcp secret import identity-cert.pem <path>
 fleet-mcp secret show community-string -host <host> [-copy]
-fleet-mcp get /fleet/v1/info                # GET a REST path, print redacted JSON
-fleet-mcp gql '{ yaraRulesets { count } }'  # run a read-only GraphQL query
-fleet-mcp spec -out spec                    # download the API specs
+fleet-mcp fleets [-check]                   # the Fleet Managers this server can manage
+fleet-mcp get [-fleet n] /fleet/v1/info     # GET a REST path, print redacted JSON
+fleet-mcp gql [-fleet n] '{ yaraRulesets { count } }'  # read-only GraphQL query
+fleet-mcp spec [-fleet n] -out spec         # download the API specs
 fleet-mcp version
 ```
 

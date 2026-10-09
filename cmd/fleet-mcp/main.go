@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/config"
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
+	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/host"
 	"github.com/jlagermann/fleet-mcp/internal/install"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
@@ -63,6 +65,8 @@ func main() {
 		err = gql(args)
 	case "spec":
 		err = pullSpec(args)
+	case "fleets":
+		err = fleetsCmd(args)
 	case "secret":
 		err = secretCmd(args)
 	case "host":
@@ -84,9 +88,10 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
   fleet-mcp [stdio]                       run the MCP server on stdio for a local MCP client (default)
-  fleet-mcp get <path>                    GET a REST path, print redacted JSON
-  fleet-mcp gql <query>                   run a read-only GraphQL query
-  fleet-mcp spec [-out dir]               download the REST spec and GraphQL schema
+  fleet-mcp fleets [-check]               list the Fleet Managers this server can manage
+  fleet-mcp get [-fleet n] <path>         GET a REST path, print redacted JSON
+  fleet-mcp gql [-fleet n] <query>        run a read-only GraphQL query
+  fleet-mcp spec [-fleet n] [-out dir]    download the REST spec and GraphQL schema
   fleet-mcp secret list [host]            show stored secrets (never values)
   fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
   fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
@@ -100,12 +105,12 @@ func usage() {
 
 type env struct {
 	cfg     config.Config
-	client  *fleet.Client // nil when no Fleet Manager is configured
+	fleets  *fleets.Registry
 	secrets *secrets.Store
 }
 
-// setup reads the configuration. needFleet requires a Fleet Manager.
-func setup(needFleet bool) (*env, error) {
+// setup reads the configuration and builds the Fleet Manager registry.
+func setup() (*env, error) {
 	cfg, err := config.FromEnv()
 	if err != nil {
 		return nil, err
@@ -116,51 +121,48 @@ func setup(needFleet bool) (*env, error) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	e := &env{cfg: cfg}
+	opts := fleets.Options{
+		FleetsFile: cfg.FleetsFile, SpecDir: cfg.SpecDir, DefaultName: cfg.DefaultFleet,
+		Timeout: cfg.Timeout, UserAgent: "fleet-mcp/" + version,
+	}
 	if cfg.SecretsDir != "" {
 		if e.secrets, err = secrets.Open(cfg.SecretsDir); err != nil {
 			return nil, err
 		}
+		opts.ProfilesDir = filepath.Join(e.secrets.Dir(), "hosts")
 	}
-	if cfg.Profile != "" {
-		if e.secrets == nil {
-			return nil, errors.New("a profile needs the secret store")
+	switch {
+	case cfg.Profile != "":
+		// The installed profile is found by the registry; make it the default.
+		if opts.DefaultName == "" {
+			opts.DefaultName = strings.ToLower(cfg.Profile)
 		}
-		p, err := install.ReadProfile(e.secrets, cfg.Profile)
+	case cfg.URL != "":
+		u, err := fleet.ParseBaseURL(cfg.URL)
 		if err != nil {
-			return nil, fmt.Errorf("%s=%s: %w", config.EnvProfile, cfg.Profile, err)
+			return nil, err
 		}
-		e.cfg.URL, e.cfg.Username, e.cfg.PasswordFile = p.URL, p.Username, p.PasswordFile
-		if e.cfg.CertSHA256 == "" && e.cfg.CAFile == "" {
-			e.cfg.CertSHA256 = p.CertSHA256
+		opts.Env = &fleets.Fleet{
+			Name: u.Hostname(), URL: cfg.URL, Username: cfg.Username, PasswordFile: cfg.PasswordFile,
+			CertSHA256: cfg.CertSHA256, CAFile: cfg.CAFile, InsecureSkipVerify: cfg.InsecureSkipVerify,
 		}
 	}
-	if !e.cfg.FleetConfigured() {
-		if needFleet {
-			return nil, fmt.Errorf("set %s and %s, or %s", config.EnvURL, config.EnvUsername, config.EnvProfile)
-		}
-		return e, nil
-	}
-	e.client, err = fleet.New(fleet.Options{
-		BaseURL: e.cfg.URL, Username: e.cfg.Username, PasswordFile: e.cfg.PasswordFile,
-		CAFile: e.cfg.CAFile, InsecureSkipVerify: e.cfg.InsecureSkipVerify, PinSHA256: e.cfg.CertSHA256,
-		Timeout: e.cfg.Timeout, UserAgent: "fleet-mcp/" + version,
-	})
-	return e, err
+	e.fleets = fleets.New(opts)
+	return e, nil
 }
 
 func (e *env) logout() {
-	if e.client == nil {
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := e.client.Logout(ctx); err != nil {
-		slog.Debug("logout failed", "err", err)
+	for _, c := range e.fleets.Conns() {
+		if err := c.Client.Logout(ctx); err != nil {
+			slog.Debug("logout failed", "fleet", c.Name, "err", err)
+		}
 	}
 }
 
 func serve() error {
-	e, err := setup(false)
+	e, err := setup()
 	if err != nil {
 		return err
 	}
@@ -170,11 +172,8 @@ func serve() error {
 		slog.Warn("TLS certificate verification is disabled")
 	}
 	deps := &tools.Deps{
-		Client: e.client, MaxBytes: cfg.MaxResponseBytes, EnableWrites: cfg.EnableWrites, User: cfg.Username,
+		Fleets: e.fleets, MaxBytes: cfg.MaxResponseBytes, EnableWrites: cfg.EnableWrites,
 		Secrets: e.secrets, SSHUser: cfg.SSHUser, SSHBinary: cfg.SSHBinary,
-	}
-	if e.client != nil {
-		deps.Specs = spec.NewStore(cfg.SpecDir, e.client)
 	}
 	if cfg.EnableWrites {
 		if cfg.AuditLog == "" {
@@ -185,16 +184,20 @@ func serve() error {
 		}
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: version}, &mcp.ServerOptions{
-		Instructions: tools.Instructions(cfg.EnableWrites, e.client != nil),
+		Instructions: tools.Instructions(cfg.EnableWrites),
 	})
 	tools.Register(s, deps)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fleetHost := "(none)"
-	if e.client != nil {
-		fleetHost = e.client.Host()
+	list, warns := e.fleets.List()
+	names := make([]string, len(list))
+	for i, f := range list {
+		names[i] = f.Name
 	}
-	slog.Info("fleet-mcp starting", "version", version, "fleet", fleetHost, "writes", cfg.EnableWrites, "audit_log", deps.Audit.Path())
+	for _, w := range warns {
+		slog.Warn("fleet configuration", "problem", w)
+	}
+	slog.Info("fleet-mcp starting", "version", version, "fleets", strings.Join(names, ","), "writes", cfg.EnableWrites, "audit_log", deps.Audit.Path())
 	return s.Run(ctx, &mcp.StdioTransport{})
 }
 
@@ -212,19 +215,43 @@ func printJSON(body []byte) error {
 	return nil
 }
 
+// fleetCmd parses "-fleet name" and returns the remaining arguments and
+// the chosen Fleet Manager.
+func fleetCmd(name string, args []string, wantArgs int, usageLine string) (*env, *fleets.Conn, []string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fleetName := fs.String("fleet", "", "Fleet Manager to use (see fleet-mcp fleets); default: the default one")
+	out := fs.String("out", "", "spec only: directory to write to")
+	if err := fs.Parse(args); err != nil {
+		return nil, nil, nil, err
+	}
+	rest := fs.Args()
+	if wantArgs >= 0 && len(rest) != wantArgs {
+		return nil, nil, nil, errors.New("usage: " + usageLine)
+	}
+	if *out != "" {
+		rest = append(rest, *out)
+	}
+	e, err := setup()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	c, err := e.fleets.Get(*fleetName)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return e, c, rest, nil
+}
+
 func get(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: fleet-mcp get <path>")
-	}
-	if err := tools.CheckGetPath(args[0]); err != nil {
-		return err
-	}
-	e, err := setup(true)
+	e, c, rest, err := fleetCmd("get", args, 1, "fleet-mcp get [-fleet name] <path>")
 	if err != nil {
 		return err
 	}
 	defer e.logout()
-	resp, err := e.client.Get(context.Background(), args[0], nil)
+	if err := tools.CheckGetPath(rest[0]); err != nil {
+		return err
+	}
+	resp, err := c.Client.Get(context.Background(), rest[0], nil)
 	if err != nil {
 		return err
 	}
@@ -232,18 +259,15 @@ func get(args []string) error {
 }
 
 func gql(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: fleet-mcp gql <query>")
-	}
-	if err := tools.CheckReadOnlyGraphQL(args[0]); err != nil {
-		return err
-	}
-	e, err := setup(true)
+	e, c, rest, err := fleetCmd("gql", args, 1, "fleet-mcp gql [-fleet name] <query>")
 	if err != nil {
 		return err
 	}
 	defer e.logout()
-	resp, err := e.client.GraphQL(context.Background(), args[0], nil)
+	if err := tools.CheckReadOnlyGraphQL(rest[0]); err != nil {
+		return err
+	}
+	resp, err := c.Client.GraphQL(context.Background(), rest[0], nil)
 	if err != nil {
 		return err
 	}
@@ -251,32 +275,68 @@ func gql(args []string) error {
 }
 
 func pullSpec(args []string) error {
-	fs := flag.NewFlagSet("spec", flag.ContinueOnError)
-	out := fs.String("out", "", "directory to write to (default FLEET_MCP_SPEC_DIR or ~/.local/share/fleet-mcp/spec)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	e, err := setup(true)
+	e, c, rest, err := fleetCmd("spec", args, 0, "fleet-mcp spec [-fleet name] [-out dir]")
 	if err != nil {
 		return err
 	}
 	defer e.logout()
-	dir := *out
-	if dir == "" {
-		dir = e.cfg.SpecDir
+	dir := e.cfg.SpecDir
+	if len(rest) == 1 {
+		dir = rest[0]
 	}
-	files, err := spec.Pull(context.Background(), e.client, dir)
+	files, err := spec.Pull(context.Background(), c.Client, dir)
 	for _, f := range files {
 		fmt.Println("wrote", f)
 	}
 	return err
 }
 
+func fleetsCmd(args []string) error {
+	fs := flag.NewFlagSet("fleets", flag.ContinueOnError)
+	check := fs.Bool("check", false, "log in to each and show its version")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	e, err := setup()
+	if err != nil {
+		return err
+	}
+	defer e.logout()
+	list, warns := e.fleets.List()
+	if len(list) == 0 {
+		fmt.Println("no Fleet Managers configured")
+	}
+	for _, f := range list {
+		flags := []string{}
+		if f.Default {
+			flags = append(flags, "default")
+		}
+		if f.ReadOnly {
+			flags = append(flags, "read-only")
+		}
+		status := ""
+		if *check {
+			if c, err := e.fleets.Get(f.Name); err != nil {
+				status = "error: " + err.Error()
+			} else if v, err := spec.Version(context.Background(), c.Client); err != nil {
+				status = "unreachable: " + err.Error()
+			} else {
+				status = "ok " + v
+			}
+		}
+		fmt.Printf("%-18s %-34s %-10s %-18s %s  [%s]\n", f.Name, f.URL, f.Username, strings.Join(flags, ","), status, f.Source)
+	}
+	for _, w := range warns {
+		fmt.Println("warning:", w)
+	}
+	return nil
+}
+
 func secretCmd(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: fleet-mcp secret list [host] | set <name> | import <name> <file>")
 	}
-	e, err := setup(false)
+	e, err := setup()
 	if err != nil {
 		return err
 	}
@@ -450,7 +510,7 @@ func hostCmd(args []string) error {
 	if err := fs.Parse(args[2:]); err != nil {
 		return err
 	}
-	e, err := setup(false)
+	e, err := setup()
 	if err != nil {
 		return err
 	}

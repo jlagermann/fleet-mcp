@@ -29,6 +29,8 @@ const (
 	EnvSecretsDir   = "FLEET_MCP_SECRETS_DIR"
 	EnvSSHUser      = "FLEET_MCP_SSH_USER"
 	EnvSSHBinary    = "FLEET_MCP_SSH"
+	EnvFleetsFile   = "FLEET_MCP_FLEETS_FILE"
+	EnvDefaultFleet = "FLEET_MCP_DEFAULT_FLEET"
 )
 
 // Config holds fleet-mcp settings.
@@ -52,6 +54,10 @@ type Config struct {
 	SecretsDir string
 	SSHUser    string
 	SSHBinary  string
+	// FleetsFile lists Fleet Managers fleet-mcp did not install.
+	FleetsFile string
+	// DefaultFleet names the Fleet Manager tools use when none is given.
+	DefaultFleet string
 }
 
 // FleetConfigured reports whether a Fleet Manager API connection is set up.
@@ -89,6 +95,13 @@ func FromEnv() (Config, error) {
 	}
 	if c.URL != "" && c.Profile != "" {
 		errs = append(errs, fmt.Errorf("set %s or %s, not both", EnvURL, EnvProfile))
+	}
+	c.FleetsFile = os.Getenv(EnvFleetsFile)
+	c.DefaultFleet = strings.TrimSpace(os.Getenv(EnvDefaultFleet))
+	if c.FleetsFile == "" {
+		if d := DataDir(); d != "" {
+			c.FleetsFile = filepath.Join(d, "fleets.json")
+		}
 	}
 	if c.SecretsDir == "" {
 		if d := DataDir(); d != "" {

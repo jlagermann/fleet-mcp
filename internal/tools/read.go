@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
+	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
 )
@@ -42,10 +43,10 @@ var genericHeaders = map[string]bool{
 	"x-fleet-api-compatibility": true, "x-content-type-options": true, "x-frame-options": true,
 }
 
-type noArgs struct{}
+type noArgs = target
 
-func (d *Deps) getDecoded(ctx context.Context, path string, q url.Values, extra ...string) (any, error) {
-	resp, err := d.Client.Get(ctx, path, q)
+func (d *Deps) getDecoded(ctx context.Context, c *fleets.Conn, path string, q url.Values, extra ...string) (any, error) {
+	resp, err := c.Client.Get(ctx, path, q)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +82,17 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_info",
 		Description: "Fleet Manager version and features, the logged-in user and tenant, and whether the REST and GraphQL schemas are available for fm_api_describe.",
 		Annotations: readOnly("Fleet Manager info"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		info, err := d.getDecoded(ctx, pathInfo, nil)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
 		if err != nil {
 			return nil, nil, err
 		}
-		out := map[string]any{"fleet_manager": info, "host": d.Client.Host()}
-		if ui, err := d.getDecoded(ctx, pathUserInfo, nil); err == nil {
+		info, err := d.getDecoded(ctx, c, pathInfo, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		out := map[string]any{"fleet": c.Name, "fleet_manager": info, "host": c.Client.Host()}
+		if ui, err := d.getDecoded(ctx, c, pathUserInfo, nil); err == nil {
 			if m, ok := ui.(map[string]any); ok {
 				perms := strings.Split(fmt.Sprint(m["permission_actions"]), ",")
 				out["user"] = map[string]any{
@@ -98,12 +103,13 @@ func registerRead(s *mcp.Server, d *Deps) {
 		} else {
 			out["user_error"] = err.Error()
 		}
-		out["schemas"] = d.Specs.Status(ctx)
+		out["schemas"] = c.Specs.Status(ctx)
 		r, err := jsonResult(out)
 		return r, nil, err
 	})
 
 	type sensorsArgs struct {
+		target
 		NameContains string `json:"name_contains,omitempty" jsonschema:"only sensors whose name contains this text (case-insensitive)"`
 		Health       string `json:"health,omitempty" jsonschema:"only sensors with this health.status value"`
 	}
@@ -112,7 +118,11 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Description: "List the sensors Fleet Manager manages, one summary row each: uid, name, health, connection, last ping, group, policy, software version, model, config-apply status, exceptions, failed services and license warnings. Use fm_sensor_get for a full record.",
 		Annotations: readOnly("List sensors"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a sensorsArgs) (*mcp.CallToolResult, any, error) {
-		cat, err := d.getDecoded(ctx, pathCatalog, nil)
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		cat, err := d.getDecoded(ctx, c, pathCatalog, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -139,6 +149,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 	})
 
 	type sensorGetArgs struct {
+		target
 		Sensor string `json:"sensor" jsonschema:"sensor uid (like 0a-1b-2c-3d-4e-5f-60-71) or exact sensor name"`
 		viewArgs
 	}
@@ -147,11 +158,15 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Description: "Full Fleet Manager detail for one sensor. Top-level keys: information (the status record: health, network, services.status, licenses, bro.inputs, exceptions), configuration.live / configuration.current / configuration.delta (running vs desired config), filter-configuration.current, metrics.status, packages.enabled.live, packages.metadata, configuration.metadata, exporter.metadata, suricata-file, file-info. Large (often >100 KB); always narrow with select/fields, e.g. select \"/information/services.status\" with fields [\"name\",\"status\"], or select \"/configuration.delta\".",
 		Annotations: readOnly("Get sensor"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a sensorGetArgs) (*mcp.CallToolResult, any, error) {
-		uid, err := d.resolveSensor(ctx, a.Sensor)
+		c, err := d.conn(a.Fleet)
 		if err != nil {
 			return nil, nil, err
 		}
-		v, err := d.getDecoded(ctx, pathCatalog+"/"+uid, nil)
+		uid, err := d.resolveSensor(ctx, c, a.Sensor)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, pathCatalog+"/"+uid, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -163,8 +178,12 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_groups_list",
 		Description: "List sensor groups with their policy and member sensor names.",
 		Annotations: readOnly("List sensor groups"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, pathGroups, nil)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, pathGroups, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -188,8 +207,12 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_policies_list",
 		Description: "List sensor policies: id, name, whether global, the groups using each one, linked Suricata policy, YARA ruleset, input/intel/CA-bundle/resource collections, bundle and enabled packages. Use fm_policy_get for the full configuration.",
 		Annotations: readOnly("List sensor policies"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, pathPolicies, nil)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, pathPolicies, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -214,6 +237,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 	})
 
 	type idArgs struct {
+		target
 		ID int `json:"id" jsonschema:"numeric id from the matching list tool"`
 		viewArgs
 	}
@@ -222,7 +246,11 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Description: "Full sensor policy by id, including its configuration and filter configuration. Use select (e.g. \"/configuration\") to narrow.",
 		Annotations: readOnly("Get sensor policy"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a idArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, fmt.Sprintf("%s%d", pathPolicy, a.ID), nil)
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, fmt.Sprintf("%s%d", pathPolicy, a.ID), nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -234,8 +262,12 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_suricata_policies_list",
 		Description: "List Fleet Manager Suricata policies with their rule sources, modifier files (enable/disable/modify), rules automation and whether each is in use. Feed URLs have license codes redacted.",
 		Annotations: readOnly("List Suricata policies"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, pathSuricataList, nil)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, pathSuricataList, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -273,7 +305,11 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Description: "Full Suricata policy by id, including Suricata settings (address/port groups, eve options) and config. Use select (e.g. \"/settings\") to narrow.",
 		Annotations: readOnly("Get Suricata policy"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a idArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, fmt.Sprintf("%s%d", pathSuricata, a.ID), nil)
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, fmt.Sprintf("%s%d", pathSuricata, a.ID), nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -285,12 +321,16 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_sensor_updates_status",
 		Description: "Software update state for each sensor (with names): update status, target version, last message, errors, offline/online update.",
 		Annotations: readOnly("Sensor update status"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, pathUpdateStatus, nil)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
 		if err != nil {
 			return nil, nil, err
 		}
-		byUID := d.sensorNames(ctx)
+		v, err := d.getDecoded(ctx, c, pathUpdateStatus, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		byUID := d.sensorNames(ctx, c)
 		var rows []any
 		for _, el := range asList(v) {
 			if m, ok := el.(map[string]any); ok {
@@ -303,6 +343,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 	})
 
 	type notifArgs struct {
+		target
 		IncludeDismissed bool   `json:"include_dismissed,omitempty" jsonschema:"also return dismissed notifications"`
 		Severity         string `json:"severity,omitempty" jsonschema:"only this severity, e.g. failed or warning"`
 		Type             string `json:"type,omitempty" jsonschema:"only this type, e.g. license"`
@@ -313,7 +354,11 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Description: "Fleet Manager notifications (license, certificate, disk, backup, sensor events), newest first. Undismissed only unless include_dismissed is set.",
 		Annotations: readOnly("Notifications"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a notifArgs) (*mcp.CallToolResult, any, error) {
-		v, err := d.getDecoded(ctx, pathNotifications, nil)
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		v, err := d.getDecoded(ctx, c, pathNotifications, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -357,10 +402,14 @@ func registerRead(s *mcp.Server, d *Deps) {
 		Name:        "fm_backups",
 		Description: "Fleet Manager backup state: the current backup image (size and date, from a HEAD request; the image itself is not downloaded), the status of the last backup generation and the automatic backup schedule.",
 		Annotations: readOnly("Backups"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a noArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		out := map[string]any{}
 		// GET on this path downloads the image; HEAD describes it.
-		if resp, err := d.Client.Do(ctx, http.MethodHead, pathBackups, nil, nil, ""); err != nil {
+		if resp, err := c.Client.Do(ctx, http.MethodHead, pathBackups, nil, nil, ""); err != nil {
 			var apiErr *fleet.APIError
 			if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
 				out["image"] = "no backup image"
@@ -382,7 +431,7 @@ func registerRead(s *mcp.Server, d *Deps) {
 			out["image"] = img
 		}
 		for key, p := range map[string]string{"status": pathBackupStatus, "schedule": pathBackupSchedule} {
-			if v, err := d.getDecoded(ctx, p, nil); err != nil {
+			if v, err := d.getDecoded(ctx, c, p, nil); err != nil {
 				out[key+"_error"] = err.Error()
 			} else {
 				out[key] = v
@@ -412,8 +461,8 @@ func sensorSummary(s map[string]any) map[string]any {
 	}
 }
 
-func (d *Deps) catalog(ctx context.Context) ([]map[string]any, error) {
-	v, err := d.getDecoded(ctx, pathCatalog, nil)
+func (d *Deps) catalog(ctx context.Context, c *fleets.Conn) ([]map[string]any, error) {
+	v, err := d.getDecoded(ctx, c, pathCatalog, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -426,9 +475,9 @@ func (d *Deps) catalog(ctx context.Context) ([]map[string]any, error) {
 	return out, nil
 }
 
-func (d *Deps) sensorNames(ctx context.Context) map[string]any {
+func (d *Deps) sensorNames(ctx context.Context, c *fleets.Conn) map[string]any {
 	out := map[string]any{}
-	cat, err := d.catalog(ctx)
+	cat, err := d.catalog(ctx, c)
 	if err != nil {
 		return out
 	}
@@ -439,7 +488,7 @@ func (d *Deps) sensorNames(ctx context.Context) map[string]any {
 }
 
 // resolveSensor accepts a uid or a sensor name.
-func (d *Deps) resolveSensor(ctx context.Context, ref string) (string, error) {
+func (d *Deps) resolveSensor(ctx context.Context, c *fleets.Conn, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return "", errors.New("sensor is required")
@@ -447,7 +496,7 @@ func (d *Deps) resolveSensor(ctx context.Context, ref string) (string, error) {
 	if sensorUID.MatchString(strings.ToLower(ref)) {
 		return strings.ToLower(ref), nil
 	}
-	cat, err := d.catalog(ctx)
+	cat, err := d.catalog(ctx, c)
 	if err != nil {
 		return "", err
 	}

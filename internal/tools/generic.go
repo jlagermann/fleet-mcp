@@ -71,6 +71,7 @@ func CheckReadOnlyGraphQL(doc string) error {
 
 func registerGeneric(s *mcp.Server, d *Deps) {
 	type apiGetArgs struct {
+		target
 		Path  string            `json:"path" jsonschema:"REST path starting with /, e.g. /fleet/v1/sensor/tag/list (path parameters filled in)"`
 		Query map[string]string `json:"query,omitempty" jsonschema:"query string parameters"`
 		viewArgs
@@ -80,11 +81,15 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		Description: "GET any Fleet Manager REST endpoint and return the JSON (secrets redacted). Use fm_api_describe to find paths and parameters. Non-JSON downloads are summarized, not returned.",
 		Annotations: readOnly("REST GET"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a apiGetArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := CheckGetPath(a.Path); err != nil {
 			return nil, nil, err
 		}
 		var notes []string
-		if idx, _, _ := d.Specs.REST(ctx); idx != nil && idx.Match("GET", a.Path) == nil {
+		if idx, _, _ := c.Specs.REST(ctx); idx != nil && idx.Match("GET", a.Path) == nil {
 			if ms := idx.PathKnown(a.Path); len(ms) > 0 {
 				notes = append(notes, fmt.Sprintf("the REST spec lists %s for this path, not GET", strings.Join(ms, ",")))
 			} else {
@@ -95,7 +100,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		for k, v := range a.Query {
 			q.Set(k, v)
 		}
-		resp, err := d.Client.GetCapped(ctx, a.Path, q, apiGetLimit)
+		resp, err := c.Client.GetCapped(ctx, a.Path, q, apiGetLimit)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -125,6 +130,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 	})
 
 	type gqlArgs struct {
+		target
 		Query     string         `json:"query" jsonschema:"GraphQL query document (queries only; mutations are rejected)"`
 		Variables map[string]any `json:"variables,omitempty" jsonschema:"GraphQL variables"`
 		viewArgs
@@ -134,10 +140,14 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		Description: "Run a read-only GraphQL query against Fleet Manager (/graph/query). GraphQL covers content resources (fileSources, fileCollections for intel/input), YARA sources and rulesets, connectors, staged sensors and sensor reservations. select is applied to the \"data\" object. Use fm_api_describe with api=graphql to find fields.",
 		Annotations: readOnly("GraphQL query"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a gqlArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := CheckReadOnlyGraphQL(a.Query); err != nil {
 			return nil, nil, err
 		}
-		resp, err := d.Client.GraphQL(ctx, a.Query, a.Variables)
+		resp, err := c.Client.GraphQL(ctx, a.Query, a.Variables)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -162,6 +172,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 	})
 
 	type describeArgs struct {
+		target
 		Search      string `json:"search,omitempty" jsonschema:"words that must all appear in the path, summary, tags or field name, e.g. \"backup restore\""`
 		API         string `json:"api,omitempty" jsonschema:"rest, graphql or both (default both)"`
 		Method      string `json:"method,omitempty" jsonschema:"with path: show one REST operation in full"`
@@ -174,6 +185,10 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		Description: "Search the Fleet Manager REST spec and GraphQL schema: find endpoints by keyword, show one REST operation's parameters, or show a GraphQL type. Works only when a schema is available (see fm_info); production Fleet Managers usually do not expose them.",
 		Annotations: readOnly("Describe API"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a describeArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.conn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
 		api := strings.ToLower(a.API)
 		if api == "" {
 			api = "both"
@@ -185,7 +200,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		out := map[string]any{}
 
 		if a.GraphQLType != "" {
-			g, src, err := d.Specs.GraphQL(ctx)
+			g, src, err := c.Specs.GraphQL(ctx)
 			if g == nil {
 				return nil, nil, fmt.Errorf("GraphQL schema unavailable: %v", err)
 			}
@@ -201,7 +216,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		}
 
 		if a.Path != "" {
-			idx, src, err := d.Specs.REST(ctx)
+			idx, src, err := c.Specs.REST(ctx)
 			if idx == nil {
 				return nil, nil, fmt.Errorf("REST spec unavailable: %v", err)
 			}
@@ -226,7 +241,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 		}
 
 		if api == "rest" || api == "both" {
-			if idx, src, err := d.Specs.REST(ctx); idx != nil {
+			if idx, src, err := c.Specs.REST(ctx); idx != nil {
 				rows := []any{}
 				for _, o := range idx.Search(a.Search, limit) {
 					rows = append(rows, map[string]any{"method": o.Method, "path": o.Path, "summary": o.Summary, "tags": o.Tags})
@@ -237,7 +252,7 @@ func registerGeneric(s *mcp.Server, d *Deps) {
 			}
 		}
 		if api == "graphql" || api == "both" {
-			if g, src, err := d.Specs.GraphQL(ctx); g != nil {
+			if g, src, err := c.Specs.GraphQL(ctx); g != nil {
 				out["graphql"] = map[string]any{"source": src, "matches": g.Search(a.Search, limit)}
 			} else {
 				out["graphql"] = map[string]any{"unavailable": err.Error()}

@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
+	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/fleettest"
 	"github.com/jlagermann/fleet-mcp/internal/spec"
 	"github.com/jlagermann/fleet-mcp/internal/tools"
@@ -27,11 +28,14 @@ func sessionWith(t *testing.T, fm *fleettest.Server, configure func(*tools.Deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := &tools.Deps{Client: c, Specs: spec.NewStore(t.TempDir(), c), User: fleettest.Username}
+	deps := &tools.Deps{Fleets: fleets.NewStatic(&fleets.Conn{
+		Fleet:  fleets.Fleet{Name: "test-fm", URL: fm.URL, Username: fleettest.Username, PasswordFile: fm.PasswordFile, Source: "test"},
+		Client: c, Specs: spec.NewStore(t.TempDir(), c),
+	})}
 	if configure != nil {
 		configure(deps)
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions(deps.EnableWrites, true)})
+	s := mcp.NewServer(&mcp.Implementation{Name: "fleet-mcp", Version: "test"}, &mcp.ServerOptions{Instructions: tools.Instructions(deps.EnableWrites)})
 	tools.Register(s, deps)
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

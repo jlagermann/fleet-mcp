@@ -3,17 +3,17 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jlagermann/fleet-mcp/internal/audit"
-	"github.com/jlagermann/fleet-mcp/internal/fleet"
+	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
 	"github.com/jlagermann/fleet-mcp/internal/secrets"
-	"github.com/jlagermann/fleet-mcp/internal/spec"
 )
 
 // DefaultMaxBytes caps a tool result when the caller does not set max_bytes.
@@ -21,21 +21,44 @@ const DefaultMaxBytes = 60_000
 
 // Deps are shared by all tools.
 type Deps struct {
-	Client *fleet.Client
-	Specs  *spec.Store
+	// Fleets is the set of Fleet Managers the API tools can reach.
+	Fleets *fleets.Registry
 	// MaxBytes is the default output cap; 0 means DefaultMaxBytes.
 	MaxBytes int
 	// EnableWrites registers the tools that change Fleet Manager.
 	EnableWrites bool
 	// Audit records executed changes; nil discards them.
 	Audit *audit.Log
-	// User is the Fleet Manager username, for audit records.
-	User string
 	// Secrets holds repository tokens, certificates and generated
 	// passwords for host installs; nil disables the host tools.
 	Secrets *secrets.Store
 	// SSHUser and SSHBinary are defaults for host tools.
 	SSHUser, SSHBinary string
+}
+
+// target selects the Fleet Manager a tool call acts on.
+type target struct {
+	Fleet string `json:"fleet,omitempty" jsonschema:"name of the Fleet Manager to use (see fm_fleets); omit for the default"`
+}
+
+// conn returns the connection for a tool call.
+func (d *Deps) conn(name string) (*fleets.Conn, error) {
+	if d.Fleets == nil {
+		return nil, errors.New("no Fleet Manager registry configured")
+	}
+	return d.Fleets.Get(name)
+}
+
+// writeConn is conn for tools that change Fleet Manager.
+func (d *Deps) writeConn(name string) (*fleets.Conn, error) {
+	c, err := d.conn(name)
+	if err != nil {
+		return nil, err
+	}
+	if c.ReadOnly {
+		return nil, fmt.Errorf("fleet %s is read-only (read_only in %s); changes are refused", c.Name, c.Source)
+	}
+	return c, nil
 }
 
 func (d *Deps) maxBytes(requested int) int {
@@ -49,12 +72,8 @@ func (d *Deps) maxBytes(requested int) int {
 }
 
 // Instructions returns the text sent to MCP clients at initialization.
-func Instructions(writes, fleetConfigured bool) string {
-	s := instructions
-	if !fleetConfigured {
-		s = "fleet-mcp installs and manages Corelight Fleet Manager (FM). No Fleet Manager is configured for this server (FLEET_MCP_URL or FLEET_MCP_PROFILE), so only the host and secret tools are available."
-	}
-	s += hostInstructions
+func Instructions(writes bool) string {
+	s := instructions + hostInstructions
 	if writes {
 		return s + writeInstructions
 	}
@@ -68,9 +87,10 @@ const writeInstructions = `
 - Changes (fm_api_write, fm_graphql_mutate) take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send the confirming call without that approval, and preview again if anything in the request changes.
 - Executed changes are recorded in an audit log.`
 
-const instructions = `fleet-mcp manages a Corelight Fleet Manager (FM).
+const instructions = `fleet-mcp installs and manages Corelight Fleet Managers (FM).
 
-- Start with fm_info to see the FM version, the logged-in user and whether the API schemas are available.
+- One server can reach several Fleet Managers. Call fm_fleets to list them; every FM tool takes an optional fleet argument (the name from fm_fleets) and otherwise uses the default. Always say which Fleet Manager a result came from, and name it in every change you propose. Fleet Managers marked read_only refuse changes.
+- Use fm_info to see an FM's version, the logged-in user and whether the API schemas are available.
 - Named tools (fm_sensors_list, fm_groups_list, fm_policies_list, ...) return compact summaries. Use the matching *_get tool or fm_api_get for full records.
 - fm_api_get reaches any REST GET endpoint; fm_graphql_query runs GraphQL queries (mutations are rejected). Use fm_api_describe to find endpoints, parameters and GraphQL fields.
 - Large results: narrow them with select (a JSON Pointer such as "/list/0"; keys may contain dots, e.g. "/health.status"), fields (pointers kept per item), offset/limit, and max_bytes.
@@ -130,7 +150,8 @@ func readOnly(title string) *mcp.ToolAnnotations {
 
 // Register adds every tool to s.
 func Register(s *mcp.Server, d *Deps) {
-	if d.Client != nil {
+	if d.Fleets != nil {
+		registerFleets(s, d)
 		registerRead(s, d)
 		registerGeneric(s, d)
 		if d.EnableWrites {

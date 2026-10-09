@@ -226,7 +226,10 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 		} else {
 			if p, err := install.ReadProfile(d.Secrets, a.Host); err == nil {
 				out["profile"] = p
-				out["next"] = fmt.Sprintf("Fleet Manager is installed. To manage it with fleet-mcp, start a server with FLEET_MCP_PROFILE=%s (it reads the URL, user, password file and pinned certificate from the profile).", a.Host)
+				if d.Fleets != nil {
+					d.Fleets.Reload()
+				}
+				out["next"] = fmt.Sprintf("Fleet Manager is installed and is now available to the other tools as fleet %q (see fm_fleets).", a.Host)
 			}
 		}
 		var notes []string

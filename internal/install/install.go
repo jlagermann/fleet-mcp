@@ -41,11 +41,14 @@ type Options struct {
 	// leaves it as it is.
 	ExposeSwagger *bool `json:"expose_swagger,omitempty"`
 	// MCPUser is the local Fleet Manager user created for fleet-mcp.
-	MCPUser string `json:"mcp_user"`
+	MCPUser string `json:"agent_user"`
 	// URL Fleet Manager is reached at from this machine; default
 	// https://<host>.
 	URL string `json:"url,omitempty"`
 }
+
+// DefaultAgentUser is the Fleet Manager user created for the agent.
+const DefaultAgentUser = "claude"
 
 var versionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+~-]*$`)
 var userPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$`)
@@ -56,10 +59,10 @@ func (o *Options) Validate() error {
 		return fmt.Errorf("bad version %q", o.Version)
 	}
 	if o.MCPUser == "" {
-		o.MCPUser = "fleet-mcp"
+		o.MCPUser = DefaultAgentUser
 	}
 	if !userPattern.MatchString(o.MCPUser) || strings.EqualFold(o.MCPUser, "admin") {
-		return fmt.Errorf("bad mcp_user %q (letters, digits, . _ -, not \"admin\")", o.MCPUser)
+		return fmt.Errorf("bad agent_user %q (letters, digits, . _ -, not \"admin\")", o.MCPUser)
 	}
 	return nil
 }
@@ -198,7 +201,7 @@ func (in *Installer) build() {
 		{"identity_cert", "install the product identity certificate at " + identityPath + " (owner corelight-fleetd, mode 0400)", in.checkIdentity, in.applyIdentity},
 		{"config", "set the sensor community-string" + swaggerNote(in.Opts.ExposeSwagger) + " in " + confPath + " (backup first)", in.checkConfig, in.applyConfig},
 		{"service", "enable and (re)start " + serviceName + " and wait for the web API", in.checkService, in.applyService},
-		{"mcp_user", "create the local Fleet Manager admin user \"" + in.Opts.MCPUser + "\" for fleet-mcp (corelight-fleetd create-user; its temporary password is replaced by a generated one stored only for fleet-mcp; an existing user of that name has its password reset)", in.checkMCPUser, in.applyMCPUser},
+		{"agent_user", "create the local Fleet Manager admin user \"" + in.Opts.MCPUser + "\" that the agent (fleet-mcp) logs in as (corelight-fleetd create-user; its temporary password is replaced by a generated one stored only for fleet-mcp; an existing user of that name has its password reset)", in.checkMCPUser, in.applyMCPUser},
 		{"admin", "create the \"admin\" user with a temporary password returned to you; Fleet Manager requires changing it at first login (an existing admin is left untouched)", in.checkAdmin, in.applyAdmin},
 	}
 }

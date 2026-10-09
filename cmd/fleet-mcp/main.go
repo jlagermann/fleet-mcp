@@ -435,7 +435,7 @@ func readSecret(spec secrets.Spec) (string, error) {
 
 func hostCmd(args []string) error {
 	if len(args) < 2 {
-		return errors.New("usage: fleet-mcp host check <host> | install <host> [-ssh-user u] [-version v] [-expose-swagger] [-mcp-user u] [-execute]")
+		return errors.New("usage: fleet-mcp host check <host> | install <host> [-ssh-user u] [-version v] [-expose-swagger] [-agent-user u] [-execute]")
 	}
 	sub, target := args[0], args[1]
 	fs := flag.NewFlagSet("host "+sub, flag.ContinueOnError)
@@ -443,7 +443,7 @@ func hostCmd(args []string) error {
 	sshPort := fs.Int("ssh-port", 0, "SSH port")
 	ver := fs.String("version", "", "corelight-fleet version (default newest)")
 	swagger := fs.Bool("expose-swagger", false, "set expose-swagger: true")
-	mcpUser := fs.String("mcp-user", "", "Fleet Manager user to create for fleet-mcp (default fleet-mcp)")
+	mcpUser := fs.String("agent-user", "", "Fleet Manager user to create for the agent (default claude)")
 	url := fs.String("url", "", "URL to reach Fleet Manager (default https://<host>)")
 	execute := fs.Bool("execute", false, "run the installation (default: preview only)")
 	if err := fs.Parse(args[2:]); err != nil {

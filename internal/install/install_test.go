@@ -140,7 +140,7 @@ func TestPlanBlocksWithoutSecrets(t *testing.T) {
 	for _, s := range plan {
 		states[s.Step] = s.State
 	}
-	if states["readiness"] != Done || states["prerequisites"] != Pending || states["repo_key"] != Blocked || states["mcp_user"] != Pending {
+	if states["readiness"] != Done || states["prerequisites"] != Pending || states["repo_key"] != Blocked || states["agent_user"] != Pending {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if !strings.Contains(plan[2].Detail, "fleet-mcp secret set repo-token") {
@@ -251,7 +251,7 @@ func TestOptionsValidate(t *testing.T) {
 		}
 	}
 	o := Options{Version: "29.2.2"}
-	if err := o.Validate(); err != nil || o.MCPUser != "fleet-mcp" {
+	if err := o.Validate(); err != nil || o.MCPUser != DefaultAgentUser {
 		t.Fatalf("%+v %v", o, err)
 	}
 }

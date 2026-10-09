@@ -14,10 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Uses the toolchain directive in go.mod, so CI, local builds and
+      # staticcheck all agree on one Go version.
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-          check-latest: true
+          go-version-file: go.mod
 
       - name: Vet
         run: go vet ./...

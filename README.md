@@ -35,7 +35,7 @@ Paste a prompt like this into Claude Code (or another MCP client that can edit i
 
 ```text
 Register the fleet-mcp MCP server for me at user scope. The binary is at
-/home/me/bin/fleet-mcp (run it as "fleet-mcp serve"). Enable writes, use "ubuntu"
+/home/me/bin/fleet-mcp (run it as "fleet-mcp stdio"). Enable writes, use "ubuntu"
 as the default SSH user for Fleet Manager hosts, and don't connect it to an
 existing Fleet Manager yet. Add "ask" permission rules for fm_host_install,
 fm_api_write and fm_graphql_mutate so I approve every change.
@@ -51,6 +51,8 @@ to https://fleet.example.com as the local user "claude", with the password in
 
 Restart your agent afterwards so it loads the server.
 
+`stdio` means the agent starts fleet-mcp as a local process and talks to it over standard input and output: the server opens no network port and serves only that agent. (`serve` is an older name for the same thing; running the binary with no subcommand does the same.)
+
 ### By hand (Claude Code)
 
 ```sh
@@ -58,13 +60,13 @@ Restart your agent afterwards so it loads the server.
 claude mcp add fleet-mcp --scope user \
   -e FLEET_MCP_ENABLE_WRITES=true \
   -e FLEET_MCP_SSH_USER=ubuntu \
-  -- /path/to/fleet-mcp serve
+  -- /path/to/fleet-mcp stdio
 
 # Connected to an existing Fleet Manager
 claude mcp add fleet-mcp --scope user \
   -e FLEET_MCP_URL=https://fleet.example.com \
   -e FLEET_MCP_USERNAME=claude \
-  -- /path/to/fleet-mcp serve
+  -- /path/to/fleet-mcp stdio
 ```
 
 Permission rules for approving each change, in `~/.claude/settings.json`:
@@ -230,6 +232,7 @@ Fleet Manager serves the REST spec only when `"expose-swagger": true` is set in 
 ## Command line
 
 ```sh
+fleet-mcp stdio                             # run the MCP server for a local agent (the default)
 fleet-mcp host checklist <host>             # what to provide before an install, with status
 fleet-mcp host check <host>                 # readiness check
 fleet-mcp host install <host> [-execute]    # preview an install; -execute runs it

@@ -1,6 +1,6 @@
 // Command fleet-mcp is an MCP server for Corelight Fleet Manager.
 //
-//	fleet-mcp [serve]                       run the MCP server on stdio (default)
+//	fleet-mcp [stdio]                       run the MCP server on stdio, for local MCP clients (default; "serve" also works)
 //	fleet-mcp get <path>                    GET a REST path and print redacted JSON
 //	fleet-mcp gql <query>                   run a read-only GraphQL query
 //	fleet-mcp spec [-out dir]               download the REST spec and GraphQL schema
@@ -48,14 +48,14 @@ import (
 var version = "dev"
 
 func main() {
-	cmd := "serve"
+	cmd := "stdio"
 	args := os.Args[1:]
 	if len(args) > 0 {
 		cmd, args = args[0], args[1:]
 	}
 	var err error
 	switch cmd {
-	case "serve":
+	case "stdio", "serve": // serve: earlier name, kept for existing registrations
 		err = serve()
 	case "get":
 		err = get(args)
@@ -83,7 +83,7 @@ func main() {
 
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
-  fleet-mcp [serve]                       run the MCP server on stdio
+  fleet-mcp [stdio]                       run the MCP server on stdio for a local MCP client (default)
   fleet-mcp get <path>                    GET a REST path, print redacted JSON
   fleet-mcp gql <query>                   run a read-only GraphQL query
   fleet-mcp spec [-out dir]               download the REST spec and GraphQL schema

@@ -138,10 +138,10 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			out := map[string]any{
 				"preview": true, "sensor": name, "uid": uid, "from": src.Name, "to": tgt.Name,
 				"group": sensor["group.name"], "policy": sensor["policy.name"], "health": sensor["health.status"],
-				"ssh": map[string]any{"host": sshHost, "user": sensorssh.User, "host_key": hk},
+				"ssh":             map[string]any{"host": sshHost, "user": sensorssh.User, "host_key": hk},
 				"sensor_settings": map[string]any{"fleet.server": addr, "fleet.community_string": "(" + tgt.Name + "'s community string)", "fleet.server_sslname": ""},
-				"after": fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name),
-				"ready": len(blockers) == 0,
+				"after":           fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name),
+				"ready":           len(blockers) == 0,
 			}
 			if len(blockers) > 0 {
 				out["blockers"] = blockers

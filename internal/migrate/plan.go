@@ -303,7 +303,7 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 	if s := m.Suricata; s != nil && !opts.excluded("suricata") {
 		n := opts.name(s.Name)
 		clash("suricata policy", n)
-		p.create("suricata policy", n, fmt.Sprintf("%d sources, %d modifier files, %d config files", len(s.Sources), len(s.ModifierFiles), len(s.Files)))
+		p.create("suricata policy", n, fmt.Sprintf("%d sources, %d modifier files, %d rule modifiers, %d config files", len(s.Sources), len(s.ModifierFiles), len(s.RuleModifiers), len(s.Files)))
 		for i := range s.Sources {
 			addFile(s.Sources[i].File)
 		}

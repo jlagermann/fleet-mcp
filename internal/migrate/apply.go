@@ -237,6 +237,12 @@ func (a *applier) suricata(ctx context.Context, s *Suricata) (int64, error) {
 	if _, err := a.api.Do(ctx, http.MethodPut, fmt.Sprintf("%s/%d", pathSuricata, id), nil, jsonBody(update), "application/json"); err != nil {
 		return 0, err
 	}
+	if len(s.RuleModifiers) > 0 {
+		if _, err := a.api.Do(ctx, http.MethodPost, fmt.Sprintf("%s/%d/modifiers", pathSuricata, id), nil,
+			jsonBody(map[string]any{"modifications": s.RuleModifiers}), "application/json"); err != nil {
+			return 0, fmt.Errorf("rule modifiers: %w", err)
+		}
+	}
 	return id, nil
 }
 
@@ -520,6 +526,10 @@ func (a *applier) verifySuricata(ctx context.Context) []string {
 	}
 	if n := len(listOf(sp["sources"])); n != len(s.Sources) {
 		diffs = append(diffs, fmt.Sprintf("Suricata policy has %d sources, the package %d", n, len(s.Sources)))
+	}
+	var mods []RuleModifier
+	if err := a.api.GetJSON(ctx, fmt.Sprintf("%s/%d/modifiers", pathSuricata, id), nil, &mods); err == nil && len(mods) != len(s.RuleModifiers) {
+		diffs = append(diffs, fmt.Sprintf("Suricata policy has %d rule modifiers, the package %d", len(mods), len(s.RuleModifiers)))
 	}
 	return diffs
 }

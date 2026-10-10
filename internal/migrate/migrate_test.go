@@ -243,6 +243,9 @@ func TestApplyCopiesEverything(t *testing.T) {
 			}
 		}
 	}
+	if mods := tgt.mods[int64(pol["suricataPolicyID"].(float64))]; len(mods) != 1 || mods[0].(map[string]any)["comment"] != "noisy" {
+		t.Errorf("rule modifiers %v", mods)
+	}
 	rs := tgt.yaraRules[int64(pol["yaraRulesetID"].(float64))]
 	if rs == nil || len(rs["sources"].([]int64)) != 1 {
 		t.Fatalf("yara ruleset %v", rs)

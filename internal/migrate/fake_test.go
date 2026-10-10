@@ -37,6 +37,7 @@ type fakeFM struct {
 	sources     map[int64]map[string]any
 	collections map[int64]map[string]any
 	connectors  map[int64]map[string]any
+	mods        map[int64][]any // per-rule modifiers by Suricata policy
 
 	// failOn makes a GraphQL operation containing this text fail.
 	failOn string
@@ -75,6 +76,7 @@ func newFakeFM(t *testing.T, version string) *fakeFM {
 		bundleData: map[int64][]byte{}, files: map[int64]fakeFile{}, yaraSources: map[int64]map[string]any{},
 		yaraRules: map[int64]map[string]any{}, sources: map[int64]map[string]any{}, collections: map[int64]map[string]any{},
 		connectors: map[int64]map[string]any{},
+		mods:       map[int64][]any{},
 	}
 	f.Handle("GET /fleet/v1/", f.rest)
 	f.Handle("POST /fleet/v1/", f.rest)
@@ -219,6 +221,15 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 		}})
 	case m == "GET" && p == "/suricata/defaults":
 		reply(w, 200, map[string]any{"settings": map[string]any{"suricata.port_groups.vxlan_ports": "4789"}})
+	case strings.HasPrefix(p, "/suricata/") && last == "modifiers":
+		sid, _ := strconv.ParseInt(parts[1], 10, 64)
+		switch m {
+		case "GET":
+			reply(w, 200, append([]any{}, f.mods[sid]...))
+		case "POST":
+			f.mods[sid] = append(f.mods[sid], body["modifications"].([]any)...)
+			w.WriteHeader(204)
+		}
 	case m == "GET" && p == "/suricata/policies":
 		reply(w, 200, listOfMaps(f.suricata))
 	case m == "POST" && p == "/suricata":
@@ -432,6 +443,7 @@ func seedSource(t *testing.T) (*fakeFM, int64) {
 			map[string]any{"name": "enable.conf", "enabled": false, "fileId": float64(0), "url": ""},
 		},
 	}
+	f.mods[sid] = []any{map[string]any{"id": 1, "action": "disable", "match": map[string]any{"key": "sid", "value": "2000001"}, "change": map[string]any{"key": "", "value": ""}, "comment": "noisy"}}
 	ysrc := f.id()
 	f.yaraSources[ysrc] = map[string]any{"id": ysrc, "name": "lab-yara", "enabled": true, "namespace": "lab", "fileID": f.addFile("lab.yar", []byte("rule x { condition: true }"))}
 	yrs := f.id()

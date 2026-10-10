@@ -90,6 +90,9 @@ type Suricata struct {
 	Sources          []SuricataSource    `json:"sources,omitempty"`
 	Files            map[string]*FileRef `json:"files,omitempty"` // yaml, threshold, classification, reference
 	ModifierFiles    []ModifierFile      `json:"modifier_files,omitempty"`
+	// RuleModifiers are the per-rule changes made in the UI (disable,
+	// enable or modify one rule).
+	RuleModifiers []RuleModifier `json:"rule_modifiers,omitempty"`
 }
 
 // SuricataSource is a rule source: an uploaded file or a URL.
@@ -100,6 +103,20 @@ type SuricataSource struct {
 	Notes      string   `json:"notes,omitempty"`
 	Enabled    bool     `json:"enabled"`
 	File       *FileRef `json:"file,omitempty"`
+}
+
+// RuleModifier is one per-rule change, as /suricata/{id}/modifiers takes it.
+type RuleModifier struct {
+	Action  string `json:"action"` // disable, enable or modify
+	Match   KeyVal `json:"match"`
+	Change  KeyVal `json:"change"`
+	Comment string `json:"comment"`
+}
+
+// KeyVal is a rule match or change, e.g. {"sid", "2000001"}.
+type KeyVal struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 // ModifierFile is disable.conf, enable.conf, modify.conf and the like.

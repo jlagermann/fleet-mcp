@@ -449,6 +449,11 @@ func (e *exporter) suricata(ctx context.Context, id int64) error {
 		}
 		s.ModifierFiles = append(s.ModifierFiles, m)
 	}
+	var mods []RuleModifier
+	if err := e.api.GetJSON(ctx, fmt.Sprintf("%s/%d/modifiers", pathSuricata, id), nil, &mods); err != nil {
+		return fmt.Errorf("rule modifiers: %w", err)
+	}
+	s.RuleModifiers = mods
 	e.m.Suricata = s
 	return nil
 }

@@ -49,6 +49,7 @@ const (
 	CommunityString  = "community-string"
 	MCPPassword      = "mcp-password"
 	SensorPassword   = "sensor-admin-password"
+	SensorSSHKey     = "sensor-ssh-key"
 )
 
 // Spec describes a known secret.
@@ -78,6 +79,7 @@ var Known = []Spec{
 	{Name: CommunityString, Scope: Host, Kind: Generated, Description: "pre-shared secret sensors use to connect to this Fleet Manager (messaging.community-string)", UsedFor: "sensor connections", Settable: true, Showable: true},
 	{Name: MCPPassword, Scope: Host, Kind: Generated, Description: "password of the local user fleet-mcp logs in as", UsedFor: "the MCP server's API access"},
 	{Name: SensorPassword, Scope: Global, Kind: Prompt, Description: "Corelight Sensor admin password; the diag-shell SSH user uses the same password", UsedFor: "moving sensors between Fleet Managers (SSH to the sensor as diag-shell)"},
+	{Name: SensorSSHKey, Scope: Global, Kind: Generated, Description: "fleet-mcp's own SSH key for logging in to sensors as diag-shell (public key installed per sensor as security.user.admin.ssh_public_key)", UsedFor: "moving sensors without the admin password"},
 }
 
 // Lookup returns the Spec for name.
@@ -244,6 +246,9 @@ func howTo(name string) string {
 	case File:
 		return fmt.Sprintf("; import it with fm_secret_import_file (name %q and the file's path) or: fleet-mcp secret import %s <path>", name, name)
 	default:
+		if name == SensorSSHKey {
+			return "; fm_sensor_ssh_key creates it"
+		}
 		if spec.Settable {
 			return fmt.Sprintf("; fm_host_install generates it, or the user sets their own first with: fleet-mcp secret set %s -host <host>", name)
 		}

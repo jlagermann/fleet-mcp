@@ -173,6 +173,7 @@ func Register(s *mcp.Server, d *Deps) {
 			registerHostWrite(s, d)
 			if d.Fleets != nil {
 				registerSensorWrite(s, d)
+				registerSensorKeyWrite(s, d)
 			}
 		}
 	}

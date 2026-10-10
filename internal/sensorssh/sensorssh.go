@@ -8,6 +8,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -123,20 +126,14 @@ func ScanHostKey(ctx context.Context, host string, pins Pins) (*HostKey, error) 
 // Run logs in as diag-shell with password and runs command. The host key
 // must match fingerprint, which is then pinned. Every secret is masked in
 // the returned output.
-func Run(ctx context.Context, host, password, fingerprint, command string, pins Pins, secrets ...string) (string, error) {
+func Run(ctx context.Context, host string, auth Auth, fingerprint, command string, pins Pins, secrets ...string) (string, error) {
+	methods, err := auth.methods()
+	if err != nil {
+		return "", err
+	}
 	cfg := &ssh.ClientConfig{
 		User: User,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-			// Some sensors offer keyboard-interactive instead of password.
-			ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
-				answers := make([]string, len(questions))
-				for i := range answers {
-					answers[i] = password
-				}
-				return answers, nil
-			}),
-		},
+		Auth: methods,
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			if got := ssh.FingerprintSHA256(key); got != fingerprint {
 				return fmt.Errorf("host key %s does not match the approved %s", got, fingerprint)
@@ -208,4 +205,88 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// Auth is how fleet-mcp logs in as diag-shell: with its own key (installed
+// on the sensor as security.user.admin.ssh_public_key), with the admin
+// password, or with the key first and the password as a fallback.
+type Auth struct {
+	// KeyPath is an OpenSSH private key file without a passphrase.
+	KeyPath  string
+	Password string
+}
+
+func (a Auth) methods() ([]ssh.AuthMethod, error) {
+	var m []ssh.AuthMethod
+	if a.KeyPath != "" {
+		b, err := os.ReadFile(a.KeyPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if err == nil {
+			signer, err := ssh.ParsePrivateKey(b)
+			if err != nil {
+				return nil, fmt.Errorf("SSH key %s: %w", a.KeyPath, err)
+			}
+			m = append(m, ssh.PublicKeys(signer))
+		}
+	}
+	if a.Password != "" {
+		pw := a.Password
+		m = append(m, ssh.Password(pw),
+			// Some sensors offer keyboard-interactive instead of password.
+			ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+				answers := make([]string, len(questions))
+				for i := range answers {
+					answers[i] = pw
+				}
+				return answers, nil
+			}))
+	}
+	if len(m) == 0 {
+		return nil, errors.New("no SSH key or password to log in to the sensor with")
+	}
+	return m, nil
+}
+
+// NewKey creates an ed25519 key pair for fleet-mcp and writes the private
+// key (OpenSSH format, no passphrase, mode 0600) to path. It returns the
+// public key line.
+func NewKey(path, comment string) (string, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	block, err := ssh.MarshalPrivateKey(priv, comment)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		return "", err
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))) + " " + comment
+	return line, os.WriteFile(path+".pub", []byte(line+"\n"), 0o644)
+}
+
+// PublicKey returns the public key line for the private key at path.
+func PublicKey(path string) (string, error) {
+	if b, err := os.ReadFile(path + ".pub"); err == nil {
+		return strings.TrimSpace(string(b)), nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	signer, err := ssh.ParsePrivateKey(b)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
 }

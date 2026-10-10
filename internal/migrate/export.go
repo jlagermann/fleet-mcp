@@ -216,7 +216,7 @@ func CleanConfiguration(cfg, cfgMeta, expMeta map[string]any) (map[string]any, [
 			if noLog[typ][field] || (redact.SensitiveKey(field) && !isNumber(v)) {
 				// Secrets are never copied; report the ones that were set.
 				if !harmlessValue(v) {
-					omitted = append(omitted, Omission{Part: "exporters", Item: name + " (" + typ + ") " + field,
+					omitted = append(omitted, Omission{Part: "exporters", Item: name + " (" + typ + ") " + field, Key: k,
 						Reason: "secret; Fleet Manager never returns it",
 						Action: "enter " + field + " for exporter " + name + " on the target policy"})
 				}
@@ -229,7 +229,7 @@ func CleanConfiguration(cfg, cfgMeta, expMeta map[string]any) (map[string]any, [
 		switch {
 		case str(pm["cl:type"]) == "Password" || truthy(pm["writeOnly"]):
 			if !harmlessValue(v) {
-				omitted = append(omitted, Omission{Part: "policy", Item: k, Reason: "write-only secret setting",
+				omitted = append(omitted, Omission{Part: "policy", Item: k, Reason: "write-only secret setting", Key: k,
 					Action: "set " + k + " on the target policy"})
 			}
 			continue

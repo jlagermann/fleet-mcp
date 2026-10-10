@@ -2,13 +2,20 @@ package migrate_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jlagermann/fleet-mcp/internal/host"
 	"github.com/jlagermann/fleet-mcp/internal/migrate"
 )
+
+var testSecrets = map[string]string{
+	"bro.exporters.abcdefghij.hec_token":                    "TOKEN-123",
+	"smartpcap.object_store.provider.s3.kms_encryption_key": "KMS-456",
+}
 
 func exportPackage(t *testing.T, snapshot bool) (string, *migrate.Manifest) {
 	t.Helper()
@@ -22,6 +29,10 @@ func exportPackage(t *testing.T, snapshot bool) (string, *migrate.Manifest) {
 	}
 	if m.Source.PolicyID != pid {
 		t.Fatalf("policy id %d, want %d", m.Source.PolicyID, pid)
+	}
+	// The secrets the user would supply (from the database or a prompt).
+	if err := migrate.AddSecrets(dir, testSecrets); err != nil {
+		t.Fatal(err)
 	}
 	return dir, m
 }
@@ -227,8 +238,11 @@ func TestApplyCopiesEverything(t *testing.T) {
 		t.Fatalf("policy %v", pol)
 	}
 	cfg := pol["configuration"].(map[string]any)
-	if _, ok := cfg["bro.exporters.abcdefghij.hec_token"]; ok {
-		t.Error("secret placeholder sent to the target")
+	if cfg["bro.exporters.abcdefghij.hec_token"] != "TOKEN-123" {
+		t.Error("exporter token not sent to the target")
+	}
+	if _, err := os.Stat(filepath.Join(dir, migrate.SecretsFile)); !os.IsNotExist(err) {
+		t.Error("secrets file kept after a complete import")
 	}
 	sp := tgt.suricata[int64(pol["suricataPolicyID"].(float64))]
 	if sp == nil || len(sp["sources"].([]any)) != 2 || sp["homeNet"] != "[10.0.0.0/8]" || sp["modifierFiles"] == nil || sp["suricata-yaml-file-id"] == nil {
@@ -374,6 +388,9 @@ func TestDeferAndCompleteExporters(t *testing.T) {
 	if len(recs) != 1 || recs[0].PolicyID != res.PolicyID || strings.Join(recs[0].Deferred, ",") != "exporters" {
 		t.Fatalf("records %+v", recs)
 	}
+	if s, _ := migrate.ReadSecrets(dir); s["bro.exporters.abcdefghij.hec_token"] == "" {
+		t.Fatal("the deferred exporter's token was dropped before completion")
+	}
 
 	complete := migrate.ImportOptions{Complete: true}
 	// Still no sensor: completion is blocked.
@@ -402,15 +419,16 @@ func TestDeferAndCompleteExporters(t *testing.T) {
 	if cfg["bro.exporters.instances"] != "abcdefghij" || cfg["bro.exporters.abcdefghij.type"] != "hec" || cfg["bro.analyzers.mqtt.enable"] != true {
 		t.Fatalf("configuration %v", cfg)
 	}
-	if _, ok := cfg["bro.exporters.abcdefghij.hec_token"]; ok {
-		t.Error("secret placeholder sent")
+	if cfg["bro.exporters.abcdefghij.hec_token"] != "TOKEN-123" {
+		t.Error("exporter token not sent on completion")
 	}
-	found := false
 	for _, o := range res2.FollowUp {
-		found = found || strings.Contains(o.Item, "hec_token")
+		if strings.Contains(o.Item, "hec_token") {
+			t.Errorf("token follow-up kept although the token was sent: %+v", o)
+		}
 	}
-	if !found {
-		t.Errorf("token follow-up missing: %+v", res2.FollowUp)
+	if _, err := os.Stat(filepath.Join(dir, migrate.SecretsFile)); !os.IsNotExist(err) {
+		t.Error("secrets file kept after completion")
 	}
 	recs, _ = migrate.ReadImports(dir)
 	if len(recs) != 1 || len(recs[0].Deferred) != 0 || recs[0].CompletedAt == nil {
@@ -421,5 +439,82 @@ func TestDeferAndCompleteExporters(t *testing.T) {
 	}
 	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{Complete: true, NameSuffix: "x"}); err == nil {
 		t.Error("complete with name_suffix accepted")
+	}
+}
+
+func TestExporterTokenQuestion(t *testing.T) {
+	dir, m := exportPackage(t, false)
+	if err := migrate.RemoveSecrets(dir); err != nil {
+		t.Fatal(err)
+	}
+	tgt := newFakeFM(t, "29.2.2-100")
+	ctx := context.Background()
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() || len(p.Decisions) != 1 || p.Decisions[0].ID != "exporter_tokens" || !strings.Contains(p.Decisions[0].Question, "Splunk (hec) hec_token") {
+		t.Fatalf("decisions %+v blockers %v", p.Decisions, p.Blockers)
+	}
+	for _, ts := range p.Tokens {
+		if ts.Provided {
+			t.Errorf("token marked provided: %+v", ts)
+		}
+	}
+	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{ExporterTokens: "prompt"})
+	if p.Ready() || !strings.Contains(strings.Join(p.Blockers, " "), "fleet-mcp policy tokens pkg") {
+		t.Fatalf("prompt: %v", p.Blockers)
+	}
+	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{ExporterTokens: "carrier-pigeon"}); err == nil {
+		t.Error("bad exporter_tokens accepted")
+	}
+	// The user enters them; the plan is ready and never shows the values.
+	if err := migrate.AddSecrets(dir, testSecrets); err != nil {
+		t.Fatal(err)
+	}
+	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{ExporterTokens: "prompt"})
+	if err != nil || !p.Ready() {
+		t.Fatalf("after tokens: %v %v %v", err, p.Blockers, p.Decisions)
+	}
+	b, _ := json.Marshal(p)
+	if strings.Contains(string(b), "TOKEN-123") || strings.Contains(string(b), "KMS-456") {
+		t.Fatal("plan output contains a secret value")
+	}
+}
+
+// fakeRunner answers the database query like sqlite3 -json.
+type fakeRunner struct{ script string }
+
+func (f *fakeRunner) Name() string { return "fm-host" }
+func (f *fakeRunner) Run(_ context.Context, script string, _ ...string) (*host.Result, error) {
+	f.script = script
+	return &host.Result{Stdout: `[{"Key":"bro.exporters.abcdefghij.hec_token","Value":"TOKEN-123"}]`}, nil
+}
+
+func TestReadDatabaseSecrets(t *testing.T) {
+	r := &fakeRunner{}
+	got, err := migrate.ReadDatabaseSecrets(context.Background(), r, 17, []string{"bro.exporters.abcdefghij.hec_token"})
+	if err != nil || got["bro.exporters.abcdefghij.hec_token"] != "TOKEN-123" {
+		t.Fatalf("%v %v", got, err)
+	}
+	if !strings.Contains(r.script, "mode=ro") || !strings.Contains(r.script, "ParentID = 17") {
+		t.Errorf("script %s", r.script)
+	}
+	if _, err := migrate.ReadDatabaseSecrets(context.Background(), r, 17, []string{"x'; DROP TABLE Policy; --"}); err == nil {
+		t.Error("unsafe key accepted")
+	}
+}
+
+func TestSecretsFromOlderManifest(t *testing.T) {
+	m := &migrate.Manifest{
+		Policy: migrate.Policy{Configuration: map[string]any{
+			"bro.exporters.q1w2e3r4t5.name": "Splunk Enterprise", "bro.exporters.q1w2e3r4t5.type": "hec",
+		}},
+		// Recorded before omissions carried their setting key.
+		Omitted: []migrate.Omission{{Part: "exporters", Item: "Splunk Enterprise (hec) hec_token"}, {Part: "input", Item: "CRWD/x"}},
+	}
+	s := m.Secrets()
+	if len(s) != 1 || s[0].Key != "bro.exporters.q1w2e3r4t5.hec_token" {
+		t.Fatalf("secrets %+v", s)
 	}
 }

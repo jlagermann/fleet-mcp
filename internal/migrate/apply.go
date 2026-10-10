@@ -456,6 +456,13 @@ func (a *applier) verify(ctx context.Context) {
 	var diffs []string
 	for _, k := range sortedKeys(a.plan.configuration) {
 		want := a.plan.configuration[k]
+		if a.plan.secretKeys[k] {
+			// Fleet Manager reads a stored secret back as true.
+			if !secretSet(got[k]) {
+				diffs = append(diffs, "secret setting "+k+" is not set")
+			}
+			continue
+		}
 		if g, ok := got[k]; !ok {
 			diffs = append(diffs, "setting "+k+" is missing")
 		} else if !sameJSON(g, want) {

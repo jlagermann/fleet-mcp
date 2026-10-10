@@ -205,7 +205,13 @@ func recordImport(dir string, p *Plan, res *Result) error {
 	} else {
 		recs = append(recs, ImportRecord{Fleet: p.Fleet, PolicyID: res.PolicyID, PolicyName: p.PolicyName, ImportedAt: now, Deferred: p.deferred})
 	}
-	return writeImports(dir, recs)
+	if err := writeImports(dir, recs); err != nil {
+		return err
+	}
+	if p.sendsAllSecrets {
+		return RemoveSecrets(dir)
+	}
+	return nil
 }
 
 // verifyConfiguration reads the completed policy back and compares the
@@ -221,6 +227,12 @@ func (a *applier) verifyConfiguration(ctx context.Context) {
 	for _, k := range sortedKeys(a.plan.configuration) {
 		want := a.plan.configuration[k]
 		g, ok := got[k]
+		if a.plan.secretKeys[k] {
+			if !secretSet(g) {
+				a.res.Verification = append(a.res.Verification, "secret setting "+k+" is not set")
+			}
+			continue
+		}
 		switch {
 		case !ok && want == "":
 		case !ok:

@@ -206,7 +206,14 @@ Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy`
 
 **Copied:** the policy settings and enabled Zeek packages, the package bundle, the linked Suricata policy (rule sources, settings, HOME_NET, custom suricata.yaml, threshold, classification and reference files, modifier files, and the per-rule modifiers made in the UI), the YARA ruleset and its rule files, and the input, intel, resource and CA bundle collections with their uploaded files. Every new object is created alongside what the target already has; nothing existing is changed. A file source that already exists on the target with identical content is reused.
 
-**Not copied:** secrets, which Fleet Manager never returns: exporter tokens, password settings, licensed rule-feed URLs (ET Pro) and connector credentials. Sources fed by a connector (CrowdStrike, Corelight, SentinelOne, ...) are listed too, or with `snapshot_connector_sources` copied as a static file. Sensor groups are not copied, and generated files (the compiled Suricata rule set and YARA ruleset) are rebuilt by the target. The preview lists everything you need to finish by hand.
+**Exporter tokens** (and other write-only settings) are never returned by Fleet Manager's API, so the preview asks how to supply them:
+
+- **database**: fleet-mcp reads them from the source Fleet Manager's database over SSH, read-only (`sqlite3` on `/var/lib/corelight-fleetd/sensor-catalog`, which keeps policy settings unencrypted). Needs SSH with passwordless sudo to the source host.
+- **prompt**: you run `fleet-mcp policy tokens <package>` in a terminal and type each token at a hidden prompt.
+
+Either way the values go into `secrets.json` in the package directory (readable only by you, not part of the manifest), are sent to the target with the new policy's settings, and are never shown in tool output or the audit log. The file is deleted once the import has used every secret; it is kept while exporters wait for a completion.
+
+**Not copied:** licensed rule-feed URLs (ET Pro) and connector credentials. Sources fed by a connector (CrowdStrike, Corelight, SentinelOne, ...) are listed too, or with `snapshot_connector_sources` copied as a static file. Sensor groups are not copied, and generated files (the compiled Suricata rule set and YARA ruleset) are rebuilt by the target. The preview lists everything you need to finish by hand.
 
 **Checks before anything is created:**
 
@@ -216,7 +223,7 @@ Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy`
 - Sensors play no part in an import: a policy can be imported, and assigned to a group, before any sensor exists. For information, the preview shows how many target sensors hold the licenses for the features the policy enables (Suricata, YARA, SmartPCAP, asset classification).
 - No created object may clash with an existing name (use `name_suffix`).
 
-If a step fails, everything created so far is deleted again. Uploaded files stay behind unreferenced, because Fleet Manager has no API to delete them.
+If a step fails, everything created so far is deleted again. Uploaded files stay behind unreferenced.
 
 Sample prompts:
 
@@ -327,6 +334,7 @@ fleet-mcp secret list [host]                # stored secrets (never values)
 fleet-mcp secret set repo-token             # hidden prompt
 fleet-mcp secret import identity-cert.pem <path>
 fleet-mcp secret show community-string -host <host> [-copy]
+fleet-mcp policy tokens <package>           # enter the exporter tokens a policy package needs (hidden prompt)
 fleet-mcp fleets [-check]                   # the Fleet Managers this server can manage
 fleet-mcp get [-fleet n] /fleet/v1/info     # GET a REST path, print redacted JSON
 fleet-mcp gql [-fleet n] '{ yaraRulesets { count } }'  # read-only GraphQL query

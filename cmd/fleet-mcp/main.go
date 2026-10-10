@@ -71,6 +71,8 @@ func main() {
 		err = secretCmd(args)
 	case "host":
 		err = hostCmd(args)
+	case "policy":
+		err = policyCmd(args)
 	case "version", "-version", "--version":
 		fmt.Println("fleet-mcp", version)
 	case "help", "-h", "--help":
@@ -99,6 +101,7 @@ func usage() {
   fleet-mcp host checklist <host>         everything to provide before an install, with status
   fleet-mcp host check <host>             check a host's readiness for Fleet Manager
   fleet-mcp host install <host> [flags]   preview an installation; add -execute to run it
+  fleet-mcp policy tokens <package>       enter exporter tokens a policy package needs, at a hidden prompt
   fleet-mcp version
 `)
 }

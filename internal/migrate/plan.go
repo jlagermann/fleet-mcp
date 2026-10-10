@@ -27,6 +27,12 @@ type ImportOptions struct {
 	// same Fleet Manager left out (today: exporters) to the policy that
 	// import created. Name, NameSuffix and Exclude do not apply.
 	Complete bool `json:"complete,omitempty"`
+	// ExporterTokens says how secret settings the API does not return
+	// (exporter tokens) are supplied: "database" reads them from the
+	// source Fleet Manager's database (done by the caller before
+	// BuildPlan), "prompt" has the user type them at a hidden prompt. Empty
+	// asks the user when tokens are needed.
+	ExporterTokens string `json:"exporter_tokens,omitempty"`
 }
 
 func (o ImportOptions) excluded(part string) bool { return slices.Contains(o.Exclude, part) }
@@ -50,9 +56,11 @@ type Plan struct {
 	// Decisions are questions for the user; the plan is not ready until
 	// each is answered by changing the options (see Decision.Resolve).
 	Decisions []Decision `json:"decisions,omitempty"`
-	Blockers  []string   `json:"blockers,omitempty"`
-	Warnings  []string   `json:"warnings,omitempty"`
-	FollowUp  []Omission `json:"follow_up,omitempty"`
+	// Tokens says, per secret setting, whether its value will be sent.
+	Tokens   []TokenStatus `json:"tokens,omitempty"`
+	Blockers []string      `json:"blockers,omitempty"`
+	Warnings []string      `json:"warnings,omitempty"`
+	FollowUp []Omission    `json:"follow_up,omitempty"`
 
 	// reuse maps "TYPE|alias|name" to an existing identical file source.
 	reuse map[string]int64
@@ -60,10 +68,23 @@ type Plan struct {
 	configuration map[string]any
 	// suricataSettings are the Suricata settings that will be sent.
 	suricataSettings map[string]any
+	// secretKeys are the secret settings in configuration; the target
+	// reads them back as true.
+	secretKeys map[string]bool
+	// sendsAllSecrets is set when every secret the package needs was sent,
+	// so its secrets file can be deleted after the import.
+	sendsAllSecrets bool
 	// completeInto is the existing policy a completion updates.
 	completeInto int64
 	// deferred are the parts this import leaves for a later completion.
 	deferred []string
+}
+
+// TokenStatus reports one secret setting without its value.
+type TokenStatus struct {
+	Setting  string `json:"setting"`
+	Label    string `json:"label"`
+	Provided bool   `json:"provided"`
 }
 
 // Decision is a question the user must answer before the import runs.
@@ -111,6 +132,9 @@ func (p *Plan) create(kind, name, detail string) {
 // dir is the package directory; a completion (opts.Complete) reads the
 // earlier import from it.
 func BuildPlan(ctx context.Context, api API, fleetName, dir string, m *Manifest, opts ImportOptions) (*Plan, error) {
+	if t := opts.ExporterTokens; t != "" && t != "database" && t != "prompt" {
+		return nil, fmt.Errorf("exporter_tokens must be database or prompt, not %q", t)
+	}
 	if opts.Complete && (opts.Name != "" || opts.NameSuffix != "" || len(opts.Exclude) > 0) {
 		return nil, errors.New("complete adds to the policy an earlier import created; name, name_suffix and exclude do not apply")
 	}
@@ -148,6 +172,11 @@ func BuildPlan(ctx context.Context, api API, fleetName, dir string, m *Manifest,
 		if err := p.planCompletion(ctx, api, dir, m, meta); err != nil {
 			return nil, err
 		}
+		if len(p.Blockers) == 0 {
+			if err := p.planSecrets(dir, m, opts); err != nil {
+				return nil, err
+			}
+		}
 		if p.Ready() && len(p.configuration) > 0 {
 			if err := p.validateConfiguration(ctx, api); err != nil {
 				return nil, err
@@ -157,6 +186,9 @@ func BuildPlan(ctx context.Context, api API, fleetName, dir string, m *Manifest,
 		return p, nil
 	}
 	p.configuration = p.planConfiguration(m, opts, meta)
+	if err := p.planSecrets(dir, m, opts); err != nil {
+		return nil, err
+	}
 	if m.Suricata != nil && !opts.excluded("suricata") {
 		if err := p.planSuricataSettings(ctx, api, m.Suricata); err != nil {
 			return nil, err

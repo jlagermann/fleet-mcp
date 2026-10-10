@@ -189,6 +189,9 @@ type Omission struct {
 	Item   string `json:"item"`
 	Reason string `json:"reason"`
 	Action string `json:"action"`
+	// Key is the setting a secret omission belongs to, so its value can be
+	// supplied at import (see secrets.go).
+	Key string `json:"key,omitempty"`
 }
 
 // ReadManifest loads and checks a package's manifest. It returns the

@@ -221,7 +221,7 @@ Either way the values go into `secrets.json` in the package directory (readable 
 - The target must know every setting (checked with its own validation endpoint). Suricata settings it does not know are listed and left out.
 - Exporters need a sensor attached to the target: Fleet Manager offers no exporter types before that. The preview then asks whether to continue with everything else. If you continue, the import is recorded in the package, and once a sensor is attached, importing the same package again with `complete: true` adds the exporters to the policy that was created. `fm_policy_packages` shows imports still waiting for that.
 - Sensors play no part in an import: a policy can be imported, and assigned to a group, before any sensor exists. For information, the preview shows how many target sensors hold the licenses for the features the policy enables (Suricata, YARA, SmartPCAP, asset classification).
-- No created object may clash with an existing name (use `name_suffix`).
+- Objects that already exist on the target under the same name are compared with the package (file checksums, Suricata settings, sources, modifier files and rule modifiers, collection and YARA sources, policy settings). An identical one is reused. A different one is shown with its differences and the preview asks what to do: keep and link the existing one (`use_existing`), or create the migrated one under a new name (`rename`, `rename:<name>`). For the sensor policy itself the choices are `rename` or `update_existing` (merge the migrated settings and links into the existing policy). Answers go in `resolve`, keyed by the question's ID.
 
 If a step fails, everything created so far is deleted again. Uploaded files stay behind unreferenced.
 

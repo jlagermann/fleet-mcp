@@ -36,18 +36,19 @@ type importArgs struct {
 
 // importOptions are shared by fm_policy_import and fm_policy_copy.
 type importOptions struct {
-	Name           string   `json:"name,omitempty" jsonschema:"name for the new sensor policy (default: the exported name)"`
-	NameSuffix     string   `json:"name_suffix,omitempty" jsonschema:"appended to the name of every object created, e.g. \" (copy)\", to avoid name clashes"`
-	Exclude        []string `json:"exclude,omitempty" jsonschema:"parts to leave out: bundle, suricata, yara, exporters, input, intel, resource, ca_bundles"`
-	ExporterTokens string   `json:"exporter_tokens,omitempty" jsonschema:"how secrets the API never returns (exporter tokens) are supplied, as the user chose when the preview asked: database (read from the source Fleet Manager's database over SSH, read-only) or prompt (the user runs fleet-mcp policy tokens <package> in a terminal)"`
-	SourceSSHHost  string   `json:"source_ssh_host,omitempty" jsonschema:"with exporter_tokens database: SSH host of the source Fleet Manager (default: the host in its URL)"`
-	SSHUser        string   `json:"ssh_user,omitempty" jsonschema:"with exporter_tokens database: SSH user with passwordless sudo (default: FLEET_MCP_SSH_USER)"`
-	Complete       bool     `json:"complete,omitempty" jsonschema:"finish an earlier import of this package into this Fleet Manager that left the exporters out: add them to the policy it created (needs a sensor attached to the target; name, name_suffix and exclude do not apply)"`
-	ConfirmToken   string   `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this import's preview; when it matches, the import runs"`
+	Name           string            `json:"name,omitempty" jsonschema:"name for the new sensor policy (default: the exported name)"`
+	NameSuffix     string            `json:"name_suffix,omitempty" jsonschema:"appended to the name of every object created, e.g. \" (copy)\", to avoid name clashes"`
+	Exclude        []string          `json:"exclude,omitempty" jsonschema:"parts to leave out: bundle, suricata, yara, exporters, input, intel, resource, ca_bundles"`
+	ExporterTokens string            `json:"exporter_tokens,omitempty" jsonschema:"how secrets the API never returns (exporter tokens) are supplied, as the user chose when the preview asked: database (read from the source Fleet Manager's database over SSH, read-only) or prompt (the user runs fleet-mcp policy tokens <package> in a terminal)"`
+	SourceSSHHost  string            `json:"source_ssh_host,omitempty" jsonschema:"with exporter_tokens database: SSH host of the source Fleet Manager (default: the host in its URL)"`
+	SSHUser        string            `json:"ssh_user,omitempty" jsonschema:"with exporter_tokens database: SSH user with passwordless sudo (default: FLEET_MCP_SSH_USER)"`
+	Resolve        map[string]string `json:"resolve,omitempty" jsonschema:"the user's answers to conflict questions in plan.decisions, keyed by decision id (conflict:<kind>:<name>): use_existing (link the existing object unchanged), rename (create the migrated one as '<name> (from <source fleet>)'), rename:<new name>, or for the sensor policy update_existing"`
+	Complete       bool              `json:"complete,omitempty" jsonschema:"finish an earlier import of this package into this Fleet Manager that left the exporters out: add them to the policy it created (needs a sensor attached to the target; name, name_suffix and exclude do not apply)"`
+	ConfirmToken   string            `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this import's preview; when it matches, the import runs"`
 }
 
 func (a importOptions) options() migrate.ImportOptions {
-	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, Exclude: a.Exclude, Complete: a.Complete, ExporterTokens: a.ExporterTokens}
+	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, Exclude: a.Exclude, Complete: a.Complete, ExporterTokens: a.ExporterTokens, Resolve: a.Resolve}
 }
 
 func (d *Deps) packageDir(name string) (string, error) {
@@ -284,7 +285,11 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 			out["next"] = "The import failed and the clean-up did not finish; list result.created and rollback_errors to the user."
 		}
 	} else {
-		out["next"] = fmt.Sprintf("Sensor policy %d was created on %s. Tell the user about result.follow_up (secrets and parts to finish by hand) and any verification differences. Assign it to sensor groups separately.", res.PolicyID, c.Name)
+		done := fmt.Sprintf("Sensor policy %d was created on %s.", res.PolicyID, c.Name)
+		if opts.Complete {
+			done = fmt.Sprintf("The exporters were added to sensor policy %d on %s.", res.PolicyID, c.Name)
+		}
+		out["next"] = fmt.Sprintf("%s Tell the user about result.follow_up (secrets and parts to finish by hand) and any verification differences. Assign it to sensor groups separately.", done)
 	}
 	r, err := jsonResult(out, notes...)
 	if runErr != nil && r != nil {
@@ -323,7 +328,7 @@ func (d *Deps) secretsFromDatabase(ctx context.Context, dir string, m *migrate.M
 	}
 	vals, err := migrate.ReadDatabaseSecrets(ctx, r, m.Source.PolicyID, keys)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w (if SSH knows the host by another name or its IP, give that as source_ssh_host)", err)
 	}
 	if err := migrate.AddSecrets(dir, vals); err != nil {
 		return 0, err

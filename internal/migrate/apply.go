@@ -80,21 +80,27 @@ func (a *applier) created(kind string, id int64, name string) {
 
 func (a *applier) run(ctx context.Context) error {
 	links := map[string]any{}
-	if b := a.m.Bundle; b != nil && !a.opts.excluded("bundle") {
+	if b := a.m.Bundle; b != nil && !a.opts.excluded("bundle") && a.plan.res["bundle"].Existing > 0 {
+		links["bundle.id"] = a.plan.res["bundle"].Existing
+	} else if b != nil && !a.opts.excluded("bundle") {
 		id, err := a.bundle(ctx, b)
 		if err != nil {
 			return fmt.Errorf("bundle: %w", err)
 		}
 		links["bundle.id"] = id
 	}
-	if s := a.m.Suricata; s != nil && !a.opts.excluded("suricata") {
+	if s := a.m.Suricata; s != nil && !a.opts.excluded("suricata") && a.plan.res["suricata policy"].Existing > 0 {
+		links["suricataPolicyID"] = a.plan.res["suricata policy"].Existing
+	} else if s != nil && !a.opts.excluded("suricata") {
 		id, err := a.suricata(ctx, s)
 		if err != nil {
 			return fmt.Errorf("suricata policy: %w", err)
 		}
 		links["suricataPolicyID"] = id
 	}
-	if y := a.m.Yara; y != nil && !a.opts.excluded("yara") {
+	if y := a.m.Yara; y != nil && !a.opts.excluded("yara") && a.plan.res["YARA ruleset"].Existing > 0 {
+		links["yaraRulesetID"] = a.plan.res["YARA ruleset"].Existing
+	} else if y != nil && !a.opts.excluded("yara") {
 		id, err := a.yara(ctx, y)
 		if err != nil {
 			return fmt.Errorf("YARA ruleset: %w", err)
@@ -106,7 +112,11 @@ func (a *applier) run(ctx context.Context) error {
 		if c == nil || a.opts.excluded(r.Role) {
 			continue
 		}
-		id, err := a.collection(ctx, c)
+		if ex := a.plan.res["collection:"+r.Role].Existing; ex > 0 {
+			links[r.Field] = ex
+			continue
+		}
+		id, err := a.collection(ctx, c, r.Role)
 		if err != nil {
 			return fmt.Errorf("%s collection: %w", r.Role, err)
 		}
@@ -160,7 +170,7 @@ func (a *applier) bundle(ctx context.Context, b *Bundle) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	name := a.opts.name(b.Name)
+	name := a.plan.nameOf("bundle", a.opts.name(b.Name))
 	resp, err := a.api.DoMultipart(ctx, http.MethodPut, pathBundle, map[string]string{"name": name, "description": b.Description},
 		fleet.FilePart{Field: "file", FileName: name, Content: content})
 	if err != nil {
@@ -234,7 +244,7 @@ func (a *applier) suricata(ctx context.Context, s *Suricata) (int64, error) {
 		update["modifierFiles"] = mods
 	}
 
-	name := a.opts.name(s.Name)
+	name := a.plan.nameOf("suricata policy", a.opts.name(s.Name))
 	resp, err := a.api.Do(ctx, http.MethodPost, pathSuricata, nil, jsonBody(map[string]any{"name": name, "description": s.Description}), "application/json")
 	if err != nil {
 		return 0, err
@@ -305,7 +315,11 @@ func (a *applier) mutateID(ctx context.Context, query, field string, input map[s
 func (a *applier) yara(ctx context.Context, y *Yara) (int64, error) {
 	var ids []int64
 	for _, src := range y.Sources {
-		name := a.opts.name(src.Name)
+		if ex := a.plan.res["YARA source:"+src.Name].Existing; ex > 0 {
+			ids = append(ids, ex)
+			continue
+		}
+		name := a.plan.nameOf("YARA source:"+src.Name, a.opts.name(src.Name))
 		input := map[string]any{"name": name, "description": src.Description, "enabled": src.Enabled, "namespace": src.Namespace}
 		if src.Interval != nil {
 			input["interval"] = *src.Interval
@@ -317,7 +331,7 @@ func (a *applier) yara(ctx context.Context, y *Yara) (int64, error) {
 		a.created("YARA source", id, name)
 		ids = append(ids, id)
 	}
-	name := a.opts.name(y.Name)
+	name := a.plan.nameOf("YARA ruleset", a.opts.name(y.Name))
 	id, err := a.mutateID(ctx, createYaraRuleset, "createYaraRuleset", map[string]any{"name": name, "description": y.Description})
 	if err != nil {
 		return 0, err
@@ -331,7 +345,7 @@ func (a *applier) yara(ctx context.Context, y *Yara) (int64, error) {
 	return id, nil
 }
 
-func (a *applier) collection(ctx context.Context, c *Collection) (int64, error) {
+func (a *applier) collection(ctx context.Context, c *Collection, role string) (int64, error) {
 	var ids []int64
 	for _, src := range c.Sources {
 		if id, ok := a.plan.reuse[c.Type+"|"+src.Alias+"|"+src.Name]; ok {
@@ -339,6 +353,9 @@ func (a *applier) collection(ctx context.Context, c *Collection) (int64, error) 
 			continue
 		}
 		alias := a.opts.name(src.Alias)
+		if v, ok := a.plan.sourceAlias[c.Type+"|"+src.Alias+"|"+src.Name]; ok {
+			alias = v
+		}
 		input := map[string]any{"alias": alias, "name": src.Name, "description": src.Description, "enabled": src.Enabled, "type": src.Type}
 		if src.Interval != nil {
 			input["interval"] = *src.Interval
@@ -350,7 +367,7 @@ func (a *applier) collection(ctx context.Context, c *Collection) (int64, error) 
 		a.created("file source", id, alias+"/"+src.Name)
 		ids = append(ids, id)
 	}
-	name := a.opts.name(c.Name)
+	name := a.plan.nameOf("collection:"+role, a.opts.name(c.Name))
 	id, err := a.mutateID(ctx, createCollection, "createFileCollection", map[string]any{"name": name, "description": c.Description, "type": c.Type})
 	if err != nil {
 		return 0, err
@@ -366,20 +383,29 @@ func (a *applier) collection(ctx context.Context, c *Collection) (int64, error) 
 
 func (a *applier) policy(ctx context.Context, links map[string]any) error {
 	pol := a.m.Policy
-	resp, err := a.api.Do(ctx, http.MethodPost, pathPolicy, nil, jsonBody(map[string]any{
-		"name": a.plan.PolicyName, "description": pol.Description, "configuration": a.plan.configuration,
-	}), "application/json")
-	if err != nil {
-		return fmt.Errorf("sensor policy: %w", err)
+	var id int64
+	update := map[string]any{}
+	if a.plan.updatePolicy > 0 {
+		// The user chose to update the existing policy: its settings are
+		// merged with the migrated ones (it is not created, so a rollback
+		// leaves it in place).
+		id = a.plan.updatePolicy
+		update["configuration"] = a.plan.configuration
+	} else {
+		resp, err := a.api.Do(ctx, http.MethodPost, pathPolicy, nil, jsonBody(map[string]any{
+			"name": a.plan.PolicyName, "description": pol.Description, "configuration": a.plan.configuration,
+		}), "application/json")
+		if err != nil {
+			return fmt.Errorf("sensor policy: %w", err)
+		}
+		if id, err = responseID(resp); err != nil {
+			return fmt.Errorf("sensor policy: %w", err)
+		}
+		a.created("sensor policy", id, a.plan.PolicyName)
 	}
-	id, err := responseID(resp)
-	if err != nil {
-		return fmt.Errorf("sensor policy: %w", err)
-	}
-	a.created("sensor policy", id, a.plan.PolicyName)
 	a.res.PolicyID = id
 	// Links and packages are only applied by an update, not at create.
-	update := map[string]any{"id": id}
+	update["id"] = id
 	for k, v := range links {
 		update[k] = v
 	}

@@ -201,9 +201,18 @@ func (p *Plan) planSecrets(dir string, m *Manifest, opts ImportOptions) error {
 	}
 	p.sendsAllSecrets = all && len(missing) == 0
 	// Secrets that will be sent need no follow-up.
+	// Older packages' omissions carry no key; match them by label.
+	byLabel := map[string]string{}
+	for _, s := range m.Secrets() {
+		byLabel[s.Label] = s.Key
+	}
 	kept := p.FollowUp[:0]
 	for _, o := range p.FollowUp {
-		if o.Key == "" || !p.secretKeys[o.Key] {
+		key := o.Key
+		if key == "" {
+			key = byLabel[o.Item]
+		}
+		if key == "" || !p.secretKeys[key] {
 			kept = append(kept, o)
 		}
 	}

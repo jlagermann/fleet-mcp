@@ -33,6 +33,9 @@ type ImportOptions struct {
 	// BuildPlan), "prompt" has the user type them at a hidden prompt. Empty
 	// asks the user when tokens are needed.
 	ExporterTokens string `json:"exporter_tokens,omitempty"`
+	// Resolve answers the plan's conflict questions, by decision ID:
+	// use_existing, rename, rename:<name>, or (sensor policy) update_existing.
+	Resolve map[string]string `json:"resolve,omitempty"`
 }
 
 func (o ImportOptions) excluded(part string) bool { return slices.Contains(o.Exclude, part) }
@@ -64,6 +67,16 @@ type Plan struct {
 
 	// reuse maps "TYPE|alias|name" to an existing identical file source.
 	reuse map[string]int64
+	// res says, per object ("bundle", "suricata policy", "YARA ruleset",
+	// "YARA source:<name>", "collection:<role>"), whether to link an
+	// existing object or create one, and under which name.
+	res map[string]resolution
+	// sourceAlias is the alias each new file source ("TYPE|alias|name")
+	// gets on the target.
+	sourceAlias map[string]string
+	// updatePolicy is the existing sensor policy to update instead of
+	// creating one.
+	updatePolicy int64
 	// configuration is the policy configuration that will be sent.
 	configuration map[string]any
 	// suricataSettings are the Suricata settings that will be sent.
@@ -335,17 +348,16 @@ func (p *Plan) validateConfiguration(ctx context.Context, api API) error {
 	return nil
 }
 
-// planObjects lists what will be created and finds name clashes.
+// planObjects lists what will be created, reuses identical objects that
+// already exist on the target, and asks the user what to do with objects
+// that exist under the same name but differ.
 func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts ImportOptions) error {
 	existing, err := loadNames(ctx, api)
 	if err != nil {
 		return err
 	}
-	clash := func(kind, name string) {
-		if existing.names[kind][name] {
-			p.block("a %s named %q already exists on the target; use name_suffix or a different name", kind, name)
-		}
-	}
+	p.res = map[string]resolution{}
+	p.sourceAlias = map[string]string{}
 	files := map[string]int64{}
 	addFile := func(f *FileRef) {
 		if f != nil {
@@ -353,80 +365,176 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 		}
 	}
 
-	if m.Bundle != nil && !opts.excluded("bundle") {
-		n := opts.name(m.Bundle.Name)
-		clash("bundle", n)
-		p.create("bundle", n, fmt.Sprintf("%d bytes", m.Bundle.File.Size))
-		addFile(&m.Bundle.File)
+	if b := m.Bundle; b != nil && !opts.excluded("bundle") {
+		r, err := p.resolve("bundle", opts.name(b.Name), existing, opts, func(id int64) ([]string, error) { return diffBundle(ctx, api, id, b) })
+		if err != nil {
+			return err
+		}
+		p.res["bundle"] = r
+		if r.Existing == 0 {
+			p.create("bundle", r.Name, fmt.Sprintf("%d bytes", b.File.Size))
+			addFile(&b.File)
+		}
 	}
 	if s := m.Suricata; s != nil && !opts.excluded("suricata") {
-		n := opts.name(s.Name)
-		clash("suricata policy", n)
-		p.create("suricata policy", n, fmt.Sprintf("%d sources, %d modifier files, %d rule modifiers, %d config files", len(s.Sources), len(s.ModifierFiles), len(s.RuleModifiers), len(s.Files)))
-		for i := range s.Sources {
-			addFile(s.Sources[i].File)
+		r, err := p.resolve("suricata policy", opts.name(s.Name), existing, opts, func(id int64) ([]string, error) {
+			return diffSuricata(ctx, api, id, s, p.suricataSettings)
+		})
+		if err != nil {
+			return err
 		}
-		for _, k := range sortedKeys(s.Files) {
-			addFile(s.Files[k])
-		}
-		for i := range s.ModifierFiles {
-			addFile(s.ModifierFiles[i].File)
+		p.res["suricata policy"] = r
+		if r.Existing == 0 {
+			p.create("suricata policy", r.Name, fmt.Sprintf("%d sources, %d modifier files, %d rule modifiers, %d config files", len(s.Sources), len(s.ModifierFiles), len(s.RuleModifiers), len(s.Files)))
+			for i := range s.Sources {
+				addFile(s.Sources[i].File)
+			}
+			for _, k := range sortedKeys(s.Files) {
+				addFile(s.Files[k])
+			}
+			for i := range s.ModifierFiles {
+				addFile(s.ModifierFiles[i].File)
+			}
 		}
 	} else if s != nil {
 		p.FollowUp = append(p.FollowUp, Omission{Part: "suricata", Item: s.Name, Reason: "excluded from this import", Action: "link a Suricata policy on the target"})
 	}
 	if y := m.Yara; y != nil && !opts.excluded("yara") {
-		n := opts.name(y.Name)
-		clash("YARA ruleset", n)
-		for _, src := range y.Sources {
-			clash("YARA source", opts.name(src.Name))
-			p.create("YARA source", opts.name(src.Name), src.Namespace)
-			addFile(src.File)
+		r, err := p.resolve("YARA ruleset", opts.name(y.Name), existing, opts, func(id int64) ([]string, error) { return diffYara(ctx, api, id, y) })
+		if err != nil {
+			return err
 		}
-		p.create("YARA ruleset", n, fmt.Sprintf("%d sources", len(y.Sources)))
+		p.res["YARA ruleset"] = r
+		if r.Existing == 0 {
+			for _, src := range y.Sources {
+				n := opts.name(src.Name)
+				rs := resolution{Name: n}
+				if o, taken := existing.get("YARA source", n); taken {
+					var diffs []string
+					if src.File == nil || o.Hash != src.File.SHA256 {
+						diffs = []string{"the rules file differs"}
+					}
+					rs = p.resolveTaken("YARA source", n, o.ID, diffs, existing, opts)
+				}
+				p.res["YARA source:"+src.Name] = rs
+				if rs.Existing == 0 {
+					p.create("YARA source", rs.Name, src.Namespace)
+					addFile(src.File)
+				}
+			}
+			p.create("YARA ruleset", r.Name, fmt.Sprintf("%d sources", len(y.Sources)))
+		}
 	} else if y != nil {
 		p.FollowUp = append(p.FollowUp, Omission{Part: "yara", Item: y.Name, Reason: "excluded from this import", Action: "link a YARA ruleset on the target"})
 	}
-	for _, r := range collectionRoles {
-		c := m.Collections[r.Role]
+	for _, role := range collectionRoles {
+		c := m.Collections[role.Role]
 		if c == nil {
 			continue
 		}
-		if opts.excluded(r.Role) {
-			p.FollowUp = append(p.FollowUp, Omission{Part: r.Role, Item: c.Name, Reason: "excluded from this import", Action: "link a " + r.Role + " collection on the target"})
+		if opts.excluded(role.Role) {
+			p.FollowUp = append(p.FollowUp, Omission{Part: role.Role, Item: c.Name, Reason: "excluded from this import", Action: "link a " + role.Role + " collection on the target"})
 			continue
 		}
-		n := opts.name(c.Name)
-		clash("collection", n)
+		r, err := p.resolve("collection", opts.name(c.Name), existing, opts, func(id int64) ([]string, error) { return diffCollection(ctx, api, id, c) })
+		if err != nil {
+			return err
+		}
+		p.res["collection:"+role.Role] = r
+		if r.Existing > 0 {
+			continue
+		}
 		for _, src := range c.Sources {
 			key := c.Type + "|" + src.Alias + "|" + src.Name
-			if id, ok := existing.sources[key+"|"+src.File.SHA256]; ok && opts.NameSuffix == "" {
-				p.reuse[key] = id
-				p.Reuses = append(p.Reuses, PlannedObject{Kind: "file source", Name: src.Alias + "/" + src.Name, ID: id, Detail: "identical file already on the target"})
-				continue
-			}
 			alias := opts.name(src.Alias)
-			if existing.sourceNames[c.Type+"|"+alias+"|"+src.Name] {
-				p.block("a %s file source %s/%s already exists on the target with different content; use name_suffix", c.Type, alias, src.Name)
+			if o, taken := existing.sources[c.Type+"|"+alias+"|"+src.Name]; taken {
+				var diffs []string
+				if o.Hash != src.File.SHA256 {
+					diffs = []string{"the file content differs"}
+				}
+				rs := p.resolveTaken("file source", alias+"/"+src.Name, o.ID, diffs, existing, opts)
+				if rs.Existing > 0 {
+					p.reuse[key] = rs.Existing
+					continue
+				}
+				// A renamed file source keeps its file name and gets a new alias.
+				alias = strings.TrimSuffix(rs.Name, "/"+src.Name)
 			}
+			p.sourceAlias[key] = alias
 			detail := fmt.Sprintf("%s, %d bytes", src.Type, src.File.Size)
 			if src.Snapshot {
 				detail += ", snapshot of connector " + src.Connector.Name
-				p.FollowUp = append(p.FollowUp, Omission{Part: r.Role, Item: src.Alias + "/" + src.Name,
+				p.FollowUp = append(p.FollowUp, Omission{Part: role.Role, Item: src.Alias + "/" + src.Name,
 					Reason: "imported as a static snapshot of connector " + src.Connector.Name,
 					Action: "create a " + src.Connector.AppConnectorID + " connector on the target to keep it updated"})
 			}
 			p.create("file source", alias+"/"+src.Name, detail)
 			addFile(src.File)
 		}
-		p.create("collection", n, fmt.Sprintf("%s, %d sources", c.Type, len(c.Sources)))
+		p.create("collection", r.Name, fmt.Sprintf("%s, %d sources", c.Type, len(c.Sources)))
 	}
-	clash("sensor policy", p.PolicyName)
-	p.create("sensor policy", p.PolicyName, fmt.Sprintf("%d settings, %d packages enabled", len(p.configuration), countTrue(m.Policy.PackagesEnabled)))
+	if err := p.planPolicyName(ctx, api, m, opts, existing); err != nil {
+		return err
+	}
 	p.UploadFiles = len(files)
 	for _, n := range files {
 		p.UploadBytes += n
 	}
+	return nil
+}
+
+// planPolicyName handles a sensor policy name that is already taken: the
+// user renames the migrated policy or updates the existing one.
+func (p *Plan) planPolicyName(ctx context.Context, api API, m *Manifest, opts ImportOptions, existing *targetNames) error {
+	detail := fmt.Sprintf("%d settings, %d packages enabled", len(p.configuration), countTrue(m.Policy.PackagesEnabled))
+	o, taken := existing.get("sensor policy", p.PolicyName)
+	if !taken {
+		p.create("sensor policy", p.PolicyName, detail)
+		return nil
+	}
+	ignore := map[string]bool{}
+	for _, s := range m.Secrets() {
+		ignore[s.Key] = true
+	}
+	diffs, err := diffPolicy(ctx, api, o.ID, p.configuration, p.secretKeys, ignore, m.Policy.PackagesEnabled)
+	if err != nil {
+		return fmt.Errorf("comparing with the existing sensor policy %q: %w", p.PolicyName, err)
+	}
+	did := conflictID("sensor policy", p.PolicyName)
+	answer := opts.Resolve[did]
+	switch {
+	case answer == UpdateExisting:
+		p.updatePolicy = o.ID
+		p.Creates = append(p.Creates, PlannedObject{Kind: "sensor policy", Name: p.PolicyName, ID: o.ID,
+			Detail: "existing policy updated with the migrated settings and links; its other settings stay"})
+		return nil
+	case answer == Rename || strings.HasPrefix(answer, Rename+":"):
+		name := strings.TrimPrefix(strings.TrimPrefix(answer, Rename), ":")
+		if name == "" {
+			name = fmt.Sprintf("%s (from %s)", p.PolicyName, p.SourceFleet)
+		}
+		if _, taken := existing.get("sensor policy", name); taken {
+			p.block("the new name %q for the sensor policy is taken too; choose another with resolve {%q: \"rename:<name>\"}", name, did)
+		}
+		p.PolicyName = name
+		p.create("sensor policy", name, detail)
+		return nil
+	case answer != "":
+		p.block("%q is not an answer for %s; use %s or %s", answer, did, UpdateExisting, Rename)
+	}
+	what := "its settings are identical"
+	if len(diffs) > 0 {
+		what = "it differs: " + summarize(diffs)
+	}
+	p.Decisions = append(p.Decisions, Decision{
+		ID: did,
+		Question: fmt.Sprintf("A sensor policy named %q already exists on %s (%s). Update the existing policy with the migrated settings and resources (groups using it pick up the change), or import the migrated policy under a new name?",
+			p.PolicyName, p.Fleet, what),
+		Resolve: map[string]string{
+			UpdateExisting: fmt.Sprintf(`preview again with resolve {%q: %q}`, did, UpdateExisting),
+			Rename:         fmt.Sprintf(`preview again with resolve {%q: %q} (imports %q) or %q`, did, Rename, fmt.Sprintf("%s (from %s)", p.PolicyName, p.SourceFleet), Rename+":<name>"),
+		},
+	})
 	return nil
 }
 
@@ -438,85 +546,6 @@ func countTrue(m map[string]bool) int {
 		}
 	}
 	return n
-}
-
-// names on the target, by kind.
-type names map[string]map[string]bool
-
-type targetNames struct {
-	names
-	// sources maps "TYPE|alias|name|sha256" to a file source ID.
-	sources map[string]int64
-	// sourceNames holds "TYPE|alias|name".
-	sourceNames map[string]bool
-}
-
-const namesQuery = `query {
-  yaraRulesets(input: {pagination: {limit: 10000}}) { rulesets { name } }
-  yaraSources(input: {pagination: {limit: 10000}}) { sources { name } }
-  fileCollections(input: {pagination: {limit: 10000}}) { collections { name } }
-  fileSources(input: {pagination: {limit: 10000}}) { sources { id alias name type file { hash } } }
-}`
-
-func loadNames(ctx context.Context, api API) (*targetNames, error) {
-	t := &targetNames{names: names{}, sources: map[string]int64{}, sourceNames: map[string]bool{}}
-	add := func(kind, name string) {
-		if t.names[kind] == nil {
-			t.names[kind] = map[string]bool{}
-		}
-		t.names[kind][name] = true
-	}
-	for kind, path := range map[string]string{"sensor policy": pathPolicyList, "suricata policy": pathSuricataList, "bundle": pathBundle} {
-		var list any
-		if err := api.GetJSON(ctx, path, nil, &list); err != nil {
-			return nil, err
-		}
-		for _, el := range listOf(list) {
-			add(kind, str(obj(el)["name"]))
-		}
-	}
-	var out struct {
-		YaraRulesets struct {
-			Rulesets []struct{ Name string } `json:"rulesets"`
-		} `json:"yaraRulesets"`
-		YaraSources struct {
-			Sources []struct{ Name string } `json:"sources"`
-		} `json:"yaraSources"`
-		FileCollections struct {
-			Collections []struct{ Name string } `json:"collections"`
-		} `json:"fileCollections"`
-		FileSources struct {
-			Sources []struct {
-				ID    any    `json:"id"`
-				Alias string `json:"alias"`
-				Name  string `json:"name"`
-				Type  string `json:"type"`
-				File  *struct {
-					Hash string `json:"hash"`
-				} `json:"file"`
-			} `json:"sources"`
-		} `json:"fileSources"`
-	}
-	if err := gql(ctx, api, namesQuery, nil, &out); err != nil {
-		return nil, err
-	}
-	for _, r := range out.YaraRulesets.Rulesets {
-		add("YARA ruleset", r.Name)
-	}
-	for _, s := range out.YaraSources.Sources {
-		add("YARA source", s.Name)
-	}
-	for _, c := range out.FileCollections.Collections {
-		add("collection", c.Name)
-	}
-	for _, s := range out.FileSources.Sources {
-		key := s.Type + "|" + s.Alias + "|" + s.Name
-		t.sourceNames[key] = true
-		if s.File != nil && s.File.Hash != "" {
-			t.sources[key+"|"+s.File.Hash] = idOf(s.ID)
-		}
-	}
-	return t, nil
 }
 
 // planSuricataSettings drops Suricata settings the target's Suricata

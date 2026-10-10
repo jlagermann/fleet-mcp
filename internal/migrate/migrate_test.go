@@ -518,3 +518,103 @@ func TestSecretsFromOlderManifest(t *testing.T) {
 		t.Fatalf("secrets %+v", s)
 	}
 }
+
+// importOnce imports the package into tgt and returns the result.
+func importOnce(t *testing.T, tgt *fakeFM, dir string, m *migrate.Manifest, opts migrate.ImportOptions) *migrate.Result {
+	t.Helper()
+	if err := migrate.AddSecrets(dir, testSecrets); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, opts)
+	if err != nil || !p.Ready() {
+		t.Fatalf("plan: %v %v %+v", err, p.Blockers, p.Decisions)
+	}
+	res, err := migrate.Apply(ctx, tgt.client, dir, m, p, opts)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	return res
+}
+
+func TestConflicts(t *testing.T) {
+	dir, m := exportPackage(t, false)
+	tgt := newFakeFM(t, "29.2.2-100")
+	first := importOnce(t, tgt, dir, m, migrate.ImportOptions{})
+	pol := tgt.policies[first.PolicyID]
+	surID := int64(pol["suricataPolicyID"].(float64))
+	bundleID := int64(pol["bundle.id"].(float64))
+	// Someone changes the Suricata policy on the target.
+	tgt.suricata[surID]["homeNet"] = "[172.16.0.0/12]"
+
+	if err := migrate.AddSecrets(dir, testSecrets); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, d := range p.Decisions {
+		ids[d.ID] = d.Question
+	}
+	surQ, ok := ids["conflict:suricata policy:lab-suricata"]
+	if !ok || !strings.Contains(surQ, "HOME_NET differs") {
+		t.Fatalf("no Suricata conflict question: %+v", p.Decisions)
+	}
+	if _, ok := ids["conflict:sensor policy:lab-policy"]; !ok {
+		t.Fatalf("no sensor policy question: %+v", p.Decisions)
+	}
+	// Identical objects are reused without a question.
+	for _, k := range []string{"conflict:bundle:lab.bundle", "conflict:YARA ruleset:lab-ruleset", "conflict:collection:lab-intel"} {
+		if _, asked := ids[k]; asked {
+			t.Errorf("asked about identical %s", k)
+		}
+	}
+	if p.Ready() {
+		t.Fatal("ready with open questions")
+	}
+
+	// Keep the target's Suricata policy; import the sensor policy renamed.
+	opts := migrate.ImportOptions{Resolve: map[string]string{
+		"conflict:suricata policy:lab-suricata": migrate.UseExisting,
+		"conflict:sensor policy:lab-policy":     migrate.Rename,
+	}}
+	nPolicies, nSur, nBundles := len(tgt.policies), len(tgt.suricata), len(tgt.bundles)
+	res := importOnce(t, tgt, dir, m, opts)
+	np := tgt.policies[res.PolicyID]
+	if np["name"] != "lab-policy (from src)" || len(tgt.policies) != nPolicies+1 {
+		t.Fatalf("renamed policy %v", np)
+	}
+	if int64(np["suricataPolicyID"].(float64)) != surID || int64(np["bundle.id"].(float64)) != bundleID {
+		t.Errorf("existing objects not linked: %v", np)
+	}
+	if len(tgt.suricata) != nSur || len(tgt.bundles) != nBundles {
+		t.Error("an existing object was created again")
+	}
+	if tgt.suricata[surID]["homeNet"] != "[172.16.0.0/12]" {
+		t.Error("the existing Suricata policy was changed")
+	}
+
+	// update_existing changes the existing sensor policy in place.
+	tgt.policies[first.PolicyID]["configuration"].(map[string]any)["bro.export.splunk.index"] = "changed"
+	opts.Resolve["conflict:sensor policy:lab-policy"] = migrate.UpdateExisting
+	res = importOnce(t, tgt, dir, m, opts)
+	if res.PolicyID != first.PolicyID || len(tgt.policies) != nPolicies+1 {
+		t.Fatalf("update_existing created a policy: %d", res.PolicyID)
+	}
+	if tgt.policies[first.PolicyID]["configuration"].(map[string]any)["bro.export.splunk.index"] != "corelight" {
+		t.Error("existing policy not updated")
+	}
+
+	// A bad answer blocks.
+	opts.Resolve["conflict:sensor policy:lab-policy"] = "shrug"
+	if err := migrate.AddSecrets(dir, testSecrets); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, opts)
+	if p.Ready() {
+		t.Error("bad answer accepted")
+	}
+}

@@ -251,6 +251,9 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 			f.deleted = append(f.deleted, fmt.Sprintf("suricata policy %d", id))
 			reply(w, 200, map[string]any{})
 		}
+	case m == "GET" && strings.HasPrefix(p, "/filemgr/files/") && last == "info":
+		fid, _ := strconv.ParseInt(parts[2], 10, 64)
+		reply(w, 200, f.fileObj(fid))
 	case m == "GET" && strings.HasPrefix(p, "/filemgr/files/") && last == "content":
 		fid, _ := strconv.ParseInt(parts[2], 10, 64)
 		ff, ok := f.files[fid]
@@ -339,13 +342,13 @@ func (f *fakeFM) graphql(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(q, "yaraRulesets(input"):
 		var rs, ys, cs, ss []any
 		for _, v := range listOfMaps(f.yaraRules) {
-			rs = append(rs, map[string]any{"name": v.(map[string]any)["name"]})
+			rs = append(rs, map[string]any{"id": v.(map[string]any)["id"], "name": v.(map[string]any)["name"]})
 		}
 		for _, v := range listOfMaps(f.yaraSources) {
-			ys = append(ys, map[string]any{"name": v.(map[string]any)["name"]})
+			ys = append(ys, map[string]any{"id": v.(map[string]any)["id"], "name": v.(map[string]any)["name"], "file": f.fileObj(v.(map[string]any)["fileID"].(int64))})
 		}
 		for _, v := range listOfMaps(f.collections) {
-			cs = append(cs, map[string]any{"name": v.(map[string]any)["name"]})
+			cs = append(cs, map[string]any{"id": v.(map[string]any)["id"], "name": v.(map[string]any)["name"]})
 		}
 		for _, v := range listOfMaps(f.sources) {
 			s := v.(map[string]any)

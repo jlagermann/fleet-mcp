@@ -13,6 +13,8 @@ import (
 	"strconv"
 
 	"github.com/jlagermann/fleet-mcp/internal/fleet"
+
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 )
 
 // Created is an object an import made on the target.
@@ -57,16 +59,23 @@ func Apply(ctx context.Context, api API, dir string, m *Manifest, plan *Plan, op
 	}
 	a := &applier{api: api, dir: dir, m: m, plan: plan, opts: opts, res: &Result{Created: []Created{}, FollowUp: plan.FollowUp}, uploaded: map[string]int64{}}
 	if plan.completeInto > 0 {
-		if err := a.applyCompletion(ctx); err != nil {
+		done := metrics.Step(ctx, "add the exporters to the existing policy")
+		err := a.applyCompletion(ctx)
+		done()
+		if err != nil {
 			return a.res, err
 		}
 		a.verifyConfiguration(ctx)
 	} else {
 		if err := a.run(ctx); err != nil {
+			done := metrics.Step(ctx, "roll back what was created")
 			a.rollback(ctx)
+			done()
 			return a.res, err
 		}
+		done := metrics.Step(ctx, "read the policy back and verify it")
 		a.verify(ctx)
+		done()
 	}
 	if err := recordImport(dir, plan, a.res); err != nil {
 		a.res.Verification = append(a.res.Verification, "could not record the import in the package: "+err.Error())
@@ -83,7 +92,9 @@ func (a *applier) run(ctx context.Context) error {
 	if b := a.m.Bundle; b != nil && !a.opts.excluded("bundle") && a.plan.res["bundle"].Existing > 0 {
 		links["bundle.id"] = a.plan.res["bundle"].Existing
 	} else if b != nil && !a.opts.excluded("bundle") {
+		done := metrics.Step(ctx, "upload the bundle")
 		id, err := a.bundle(ctx, b)
+		done()
 		if err != nil {
 			return fmt.Errorf("bundle: %w", err)
 		}
@@ -92,7 +103,9 @@ func (a *applier) run(ctx context.Context) error {
 	if s := a.m.Suricata; s != nil && !a.opts.excluded("suricata") && a.plan.res["suricata policy"].Existing > 0 {
 		links["suricataPolicyID"] = a.plan.res["suricata policy"].Existing
 	} else if s != nil && !a.opts.excluded("suricata") {
+		done := metrics.Step(ctx, "create the Suricata policy and upload its files")
 		id, err := a.suricata(ctx, s)
+		done()
 		if err != nil {
 			return fmt.Errorf("suricata policy: %w", err)
 		}
@@ -101,7 +114,9 @@ func (a *applier) run(ctx context.Context) error {
 	if y := a.m.Yara; y != nil && !a.opts.excluded("yara") && a.plan.res["YARA ruleset"].Existing > 0 {
 		links["yaraRulesetID"] = a.plan.res["YARA ruleset"].Existing
 	} else if y != nil && !a.opts.excluded("yara") {
+		done := metrics.Step(ctx, "create the YARA ruleset and upload its rules")
 		id, err := a.yara(ctx, y)
+		done()
 		if err != nil {
 			return fmt.Errorf("YARA ruleset: %w", err)
 		}
@@ -116,12 +131,15 @@ func (a *applier) run(ctx context.Context) error {
 			links[r.Field] = ex
 			continue
 		}
+		done := metrics.Step(ctx, "create the %s collection and upload its files", r.Role)
 		id, err := a.collection(ctx, c, r.Role)
+		done()
 		if err != nil {
 			return fmt.Errorf("%s collection: %w", r.Role, err)
 		}
 		links[r.Field] = id
 	}
+	defer metrics.Step(ctx, "create or update the sensor policy and link everything")()
 	return a.policy(ctx, links)
 }
 

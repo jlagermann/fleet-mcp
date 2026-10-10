@@ -32,6 +32,7 @@ const (
 	EnvFleetsFile   = "FLEET_MCP_FLEETS_FILE"
 	EnvDefaultFleet = "FLEET_MCP_DEFAULT_FLEET"
 	EnvPackagesDir  = "FLEET_MCP_PACKAGES_DIR"
+	EnvDemoMetrics  = "FLEET_MCP_DEMO_METRICS"
 )
 
 // Config holds fleet-mcp settings.
@@ -61,6 +62,8 @@ type Config struct {
 	DefaultFleet string
 	// PackagesDir holds exported policy packages.
 	PackagesDir string
+	// DemoMetrics appends timing and size metrics to every tool result.
+	DemoMetrics bool
 }
 
 // FleetConfigured reports whether a Fleet Manager API connection is set up.
@@ -133,7 +136,7 @@ func FromEnv() (Config, error) {
 			c.AuditLog = filepath.Join(d, "audit.jsonl")
 		}
 	}
-	for name, dst := range map[string]*bool{EnvInsecure: &c.InsecureSkipVerify, EnvWrites: &c.EnableWrites} {
+	for name, dst := range map[string]*bool{EnvInsecure: &c.InsecureSkipVerify, EnvWrites: &c.EnableWrites, EnvDemoMetrics: &c.DemoMetrics} {
 		if v := os.Getenv(name); v != "" {
 			b, err := strconv.ParseBool(v)
 			if err != nil {

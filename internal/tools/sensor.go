@@ -16,6 +16,7 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/fleets"
 	"github.com/jlagermann/fleet-mcp/internal/host"
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 	"github.com/jlagermann/fleet-mcp/internal/secrets"
 	"github.com/jlagermann/fleet-mcp/internal/sensorssh"
 )
@@ -118,7 +119,9 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			return nil, nil, err
 		}
 		pins := d.sensorPins()
+		scan := metrics.Step(ctx, "read the sensor's SSH host key")
 		hk, err := sensorssh.ScanHostKey(ctx, sshHost, pins)
+		scan()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -208,6 +211,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 
 // waitForSensor polls the target's catalog until the sensor appears.
 func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, limit time.Duration) map[string]any {
+	defer metrics.Step(ctx, "wait for the sensor to appear on %s", c.Name)()
 	deadline := time.Now().Add(limit)
 	for {
 		if cat, err := d.catalog(ctx, c); err == nil {
@@ -247,14 +251,18 @@ func moveSteps(ctx context.Context, sshHost string, auth sensorssh.Auth, fingerp
 	var log strings.Builder
 	for i, s := range steps {
 		if i > 0 {
+			waited := metrics.Step(ctx, "wait %s for the sensor to apply the change", pause)
 			select {
 			case <-ctx.Done():
 				return log.String(), ctx.Err()
 			case <-time.After(pause):
 			}
+			waited()
 		}
 		fmt.Fprintf(&log, "step %d: %s\n", i+1, s.label)
+		stepDone := metrics.Step(ctx, "SSH step %d: %s", i+1, s.label)
 		out, err := sensorssh.Run(ctx, sshHost, auth, fingerprint, s.cmd, pins, cs, auth.Password)
+		stepDone()
 		log.WriteString(out)
 		if err != nil {
 			return log.String(), fmt.Errorf("step %d (%s): %w", i+1, s.label, err)
@@ -393,10 +401,12 @@ func registerSensorKeyWrite(s *mcp.Server, d *Deps) {
 			return nil, nil, err
 		}
 		body := map[string]any{"group.id": rec0.Information["group.id"], "exceptions.current": map[string]any{sensorAdminKey: pub}}
+		set := metrics.Step(ctx, "set the key on %s and apply it", c.Name)
 		resp, runErr := c.Client.Do(ctx, "PUT", pathCatalog+"/"+uid, nil, mustJSON(body), "application/json")
 		if runErr == nil {
 			resp, runErr = c.Client.Do(ctx, "POST", pathCatalog+"/"+uid+"/apply-changes", nil, []byte("{}"), "application/json")
 		}
+		set()
 		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_sensor_ssh_key", Token: token,
 			Body: map[string]any{"sensor": name, "uid": uid, sensorAdminKey: pub}}
 		if resp != nil {

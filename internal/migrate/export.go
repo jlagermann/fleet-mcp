@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/jlagermann/fleet-mcp/internal/redact"
+
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 )
 
 // DefaultMaxFileBytes caps one exported file.
@@ -65,6 +67,7 @@ type exporter struct {
 
 // Export writes a package for one sensor policy to opts.Dir.
 func Export(ctx context.Context, api API, opts ExportOptions) (m *Manifest, err error) {
+	defer metrics.Step(ctx, "export the policy and download its files")()
 	if opts.Dir == "" {
 		return nil, errors.New("no package directory")
 	}

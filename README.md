@@ -275,6 +275,7 @@ Settings come from environment variables.
 | `FLEET_MCP_ENABLE_WRITES` | `false` | Register the tools that change Fleet Manager or install it. |
 | `FLEET_MCP_AUDIT_LOG` | `~/.local/share/fleet-mcp/audit.jsonl` | JSON Lines record of every executed change (secrets redacted). |
 | `FLEET_MCP_PACKAGES_DIR` | `~/.local/share/fleet-mcp/packages` | Exported policy packages. |
+| `FLEET_MCP_DEMO_METRICS` | `false` | For demos: append to every tool result its time, a timeline of where the time went (SSH steps, waits for a sensor, uploads, Fleet Manager API calls) and the result's size in AI-context tokens. |
 | `FLEET_MCP_SECRETS_DIR` | `~/.local/share/fleet-mcp/secrets` | Secret store. |
 | `FLEET_MCP_SSH_USER` | | Default SSH user for host tools. |
 | `FLEET_MCP_SSH` | `ssh` | SSH client to run. |
@@ -360,6 +361,13 @@ fleet-mcp gql [-fleet n] '{ yaraRulesets { count } }'  # read-only GraphQL query
 fleet-mcp spec [-fleet n] -out spec         # download the API specs
 fleet-mcp version
 ```
+
+## Demo metrics
+
+To show what each tool costs in time and AI tokens:
+
+- Set `FLEET_MCP_DEMO_METRICS=true` in the server's registration. Every tool result then ends with a footer: total time, a timeline (for example the 30-second pauses while a sensor applies a change during `fm_sensor_move`), Fleet Manager API calls and time, and the result's size in tokens of AI context.
+- The model's own token use is known only to the client. `fleet-mcp report [-since <time>] [-timeline] <session.jsonl>` reads a Claude Code session transcript (`~/.claude/projects/<project>/<session>.jsonl`) and lists every fleet-mcp call with its wall time, the model's output and input tokens for the turn that made it, and the result size; `-timeline` adds the server's footers.
 
 ## Development
 

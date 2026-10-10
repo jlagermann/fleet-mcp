@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 )
 
 const (
@@ -399,6 +401,7 @@ func (c *Client) GetCapped(ctx context.Context, path string, query url.Values, l
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body []byte, contentType string, limit int64, capped bool) (*Response, error) {
+	defer func(t time.Time) { metrics.API(ctx, time.Since(t)) }(time.Now())
 	if err := ValidatePath(path); err != nil {
 		return nil, err
 	}
@@ -456,6 +459,7 @@ func (c *Client) roundTrip(ctx context.Context, tok, method, path string, query 
 // Download streams the body of a GET to w without buffering it, for files
 // larger than Do accepts. It fails if the body exceeds limit bytes.
 func (c *Client) Download(ctx context.Context, path string, w io.Writer, limit int64) (int64, error) {
+	defer func(t time.Time) { metrics.API(ctx, time.Since(t)) }(time.Now())
 	if err := ValidatePath(path); err != nil {
 		return 0, err
 	}

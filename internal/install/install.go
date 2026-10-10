@@ -14,6 +14,8 @@ import (
 
 	"github.com/jlagermann/fleet-mcp/internal/host"
 	"github.com/jlagermann/fleet-mcp/internal/secrets"
+
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 )
 
 // Paths and names from the Fleet Manager installation guide.
@@ -303,7 +305,9 @@ func (in *Installer) Execute(ctx context.Context) ([]StepStatus, error) {
 			}
 			return out, fmt.Errorf("%s: %s", s.name, detail)
 		}
+		done := metrics.Step(ctx, "install step %s", s.name)
 		applied, err := s.apply(ctx)
+		done()
 		if err == nil {
 			// Never trust an apply on its own: the step's check must now
 			// pass, or the step failed.

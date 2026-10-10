@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 )
 
 // Parts can be left out of an import with ImportOptions.Exclude.
@@ -145,6 +147,7 @@ func (p *Plan) create(kind, name, detail string) {
 // dir is the package directory; a completion (opts.Complete) reads the
 // earlier import from it.
 func BuildPlan(ctx context.Context, api API, fleetName, dir string, m *Manifest, opts ImportOptions) (*Plan, error) {
+	defer metrics.Step(ctx, "check the target: version, settings, licenses, names and conflicts")()
 	if t := opts.ExporterTokens; t != "" && t != "database" && t != "prompt" {
 		return nil, fmt.Errorf("exporter_tokens must be database or prompt, not %q", t)
 	}

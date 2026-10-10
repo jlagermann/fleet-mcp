@@ -14,6 +14,7 @@ import (
 
 	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/fleets"
+	"github.com/jlagermann/fleet-mcp/internal/metrics"
 	"github.com/jlagermann/fleet-mcp/internal/migrate"
 )
 
@@ -326,7 +327,9 @@ func (d *Deps) secretsFromDatabase(ctx context.Context, dir string, m *migrate.M
 	for i, s := range missing {
 		keys[i] = s.Key
 	}
+	done := metrics.Step(ctx, "read %d tokens from %s's database over SSH", len(keys), m.Source.Fleet)
 	vals, err := migrate.ReadDatabaseSecrets(ctx, r, m.Source.PolicyID, keys)
+	done()
 	if err != nil {
 		return 0, fmt.Errorf("%w (if SSH knows the host by another name or its IP, give that as source_ssh_host)", err)
 	}

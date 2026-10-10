@@ -171,6 +171,14 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 		cfg[k] = v
 	}
 	if dropExporters {
+		// The exporters are recreated by hand, tokens included.
+		kept := p.FollowUp[:0]
+		for _, o := range p.FollowUp {
+			if o.Part != "exporters" {
+				kept = append(kept, o)
+			}
+		}
+		p.FollowUp = kept
 		var names []string
 		for k, v := range m.Policy.Configuration {
 			if inst, field, ok := exporterKey(k); ok && field == "name" {
@@ -180,7 +188,7 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 		sort.Strings(names)
 		for _, n := range names {
 			p.FollowUp = append(p.FollowUp, Omission{Part: "exporters", Item: n, Reason: "excluded from this import",
-				Action: "recreate exporter " + n + " on the target policy"})
+				Action: "recreate exporter " + n + " on the target policy, with its token"})
 		}
 	}
 	if len(unknown) > 0 {

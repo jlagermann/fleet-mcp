@@ -179,6 +179,11 @@ func TestPlanExportersAndSettings(t *testing.T) {
 	if err != nil || !p.Ready() {
 		t.Fatalf("exclude exporters: %v %v", err, p.Blockers)
 	}
+	for _, o := range p.FollowUp {
+		if strings.Contains(o.Item, "hec_token") {
+			t.Errorf("token follow-up kept although the exporter is excluded: %+v", o)
+		}
+	}
 	found := false
 	for _, o := range p.FollowUp {
 		found = found || (o.Part == "exporters" && strings.Contains(o.Item, "Splunk"))

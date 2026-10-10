@@ -79,6 +79,8 @@ type Plan struct {
 	// updatePolicy is the existing sensor policy to update instead of
 	// creating one.
 	updatePolicy int64
+	// corelightUpdate counts copied items that Corelight-update maintains.
+	corelightUpdate int
 	// configuration is the policy configuration that will be sent.
 	configuration map[string]any
 	// suricataSettings are the Suricata settings that will be sent.
@@ -376,6 +378,9 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 		p.res["bundle"] = r
 		if r.Existing == 0 {
 			p.create("bundle", r.Name, fmt.Sprintf("%d bytes", b.File.Size))
+			if fromCorelightUpdate(b.Description) {
+				p.fromCorelightUpdate("bundle", "bundle "+r.Name)
+			}
 			addFile(&b.File)
 		}
 	}
@@ -390,6 +395,9 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 		if r.Existing == 0 {
 			p.create("suricata policy", r.Name, fmt.Sprintf("%d sources, %d modifier files, %d rule modifiers, %d config files", len(s.Sources), len(s.ModifierFiles), len(s.RuleModifiers), len(s.Files)))
 			for i := range s.Sources {
+				if s.Sources[i].Name == "Corelight-update" {
+					p.fromCorelightUpdate("suricata", "rule source "+s.Sources[i].Name+" of Suricata policy "+r.Name)
+				}
 				addFile(s.Sources[i].File)
 			}
 			for _, k := range sortedKeys(s.Files) {
@@ -422,6 +430,9 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 				p.res["YARA source:"+src.Name] = rs
 				if rs.Existing == 0 {
 					p.create("YARA source", rs.Name, src.Namespace)
+					if strings.HasPrefix(src.Name, "Corelight-update") {
+						p.fromCorelightUpdate("yara", "YARA source "+rs.Name)
+					}
 					addFile(src.File)
 				}
 			}
@@ -472,9 +483,15 @@ func (p *Plan) planObjects(ctx context.Context, api API, m *Manifest, opts Impor
 					Action: "create a " + src.Connector.AppConnectorID + " connector on the target to keep it updated"})
 			}
 			p.create("file source", alias+"/"+src.Name, detail)
+			if fromCorelightUpdate(src.Description) {
+				p.fromCorelightUpdate(role.Role, role.Role+" source "+alias+"/"+src.Name+" of collection "+r.Name)
+			}
 			addFile(src.File)
 		}
 		p.create("collection", r.Name, fmt.Sprintf("%s, %d sources", c.Type, len(c.Sources)))
+	}
+	if p.corelightUpdate > 0 {
+		p.warn("%d copied items were pushed by Corelight-update on %s (see follow_up). On %s they are static copies: they are not updated unless Corelight-update is also configured to push to the new policy there", p.corelightUpdate, p.SourceFleet, p.Fleet)
 	}
 	if err := p.planPolicyName(ctx, api, m, opts, existing); err != nil {
 		return err
@@ -593,4 +610,21 @@ func schemaHas(props map[string]any, key string) bool {
 		}
 	}
 	return false
+}
+
+// fromCorelightUpdate notes a copied item that Corelight-update pushed to
+// the source Fleet Manager: on the target it is a static copy.
+func (p *Plan) fromCorelightUpdate(part, item string) {
+	p.corelightUpdate++
+	p.FollowUp = append(p.FollowUp, Omission{Part: part, Item: item,
+		Reason: "pushed to " + p.SourceFleet + " by Corelight-update; the copy is not updated",
+		Action: "configure Corelight-update to push to the new policy on " + p.Fleet + " if this content should keep updating"})
+}
+
+// fromCorelightUpdate recognizes the descriptions Corelight-update gives
+// what it pushes ("Created by Corelight Update", "Package created and
+// managed by Corelight-update").
+func fromCorelightUpdate(description string) bool {
+	d := strings.ToLower(strings.ReplaceAll(description, "-", " "))
+	return strings.Contains(d, "by corelight update")
 }

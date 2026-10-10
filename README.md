@@ -215,6 +215,8 @@ Either way the values go into `secrets.json` in the package directory (readable 
 
 **Not copied:** licensed rule-feed URLs (ET Pro) and connector credentials. Sources fed by a connector (CrowdStrike, Corelight, SentinelOne, ...) are listed too, or with `snapshot_connector_sources` copied as a static file. Sensor groups are not copied, and generated files (the compiled Suricata rule set and YARA ruleset) are rebuilt by the target. The preview lists everything you need to finish by hand.
 
+**Content maintained by Corelight-update** (a Suricata source named `Corelight-update`, input and intel sources described "Created by Corelight Update", YARA sources whose name starts with `Corelight-update`, bundles "managed by Corelight-update") is copied as it is now and flagged in the preview: on the target it stays static unless Corelight-update is also configured to push to the new policy.
+
 **Checks before anything is created:**
 
 - Fleet Manager versions must match on major.minor (29.2.x to 29.2.y is fine).

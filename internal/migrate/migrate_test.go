@@ -618,3 +618,26 @@ func TestConflicts(t *testing.T) {
 		t.Error("bad answer accepted")
 	}
 }
+
+func TestCorelightUpdateWarning(t *testing.T) {
+	dir, m := exportPackage(t, false)
+	m.Suricata.Sources[0].Name = "Corelight-update"
+	m.Collections["intel"].Sources[0].Description = "Created by Corelight Update"
+	tgt := newFakeFM(t, "29.2.2-100")
+	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", dir, m, migrate.ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(p.Warnings, " "), "2 copied items were pushed by Corelight-update") {
+		t.Errorf("warnings %v", p.Warnings)
+	}
+	n := 0
+	for _, o := range p.FollowUp {
+		if strings.Contains(o.Reason, "Corelight-update") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("follow-up items %+v", p.FollowUp)
+	}
+}

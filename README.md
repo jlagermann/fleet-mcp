@@ -38,7 +38,8 @@ Register the fleet-mcp MCP server for me at user scope. The binary is at
 /home/me/bin/fleet-mcp (run it as "fleet-mcp stdio"). Enable writes, use "ubuntu"
 as the default SSH user for Fleet Manager hosts, and don't connect it to an
 existing Fleet Manager yet. Add "ask" permission rules for fm_host_install,
-fm_api_write and fm_graphql_mutate so I approve every change.
+fm_api_write, fm_graphql_mutate, fm_policy_import and fm_policy_copy so I
+approve every change.
 ```
 
 To connect it to an existing Fleet Manager instead:
@@ -77,7 +78,9 @@ Permission rules for approving each change, in `~/.claude/settings.json`:
     "ask": [
       "mcp__fleet-mcp__fm_host_install",
       "mcp__fleet-mcp__fm_api_write",
-      "mcp__fleet-mcp__fm_graphql_mutate"
+      "mcp__fleet-mcp__fm_graphql_mutate",
+      "mcp__fleet-mcp__fm_policy_import",
+      "mcp__fleet-mcp__fm_policy_copy"
     ]
   }
 }
@@ -197,6 +200,34 @@ Which Fleet Managers can you reach, and what version is each running?
 Compare the sensor policies on prod and lab.
 ```
 
+## Copy a sensor policy to another Fleet Manager
+
+Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy` copies a sensor policy and everything it uses from one Fleet Manager to another; `fm_policy_export` and `fm_policy_import` do the two halves separately, through a package directory in `~/.local/share/fleet-mcp/packages`.
+
+**Copied:** the policy settings and enabled Zeek packages, the package bundle, the linked Suricata policy (rule sources, settings, HOME_NET, custom suricata.yaml, threshold, classification and reference files, and modifier files), the YARA ruleset and its rule files, and the input, intel, resource and CA bundle collections with their uploaded files. Every new object is created alongside what the target already has; nothing existing is changed. A file source that already exists on the target with identical content is reused.
+
+**Not copied:** secrets, which Fleet Manager never returns: exporter tokens, password settings, licensed rule-feed URLs (ET Pro) and connector credentials. Sources fed by a connector (CrowdStrike, Corelight, SentinelOne, ...) are listed too, or with `snapshot_connector_sources` copied as a static file. Sensor groups are not copied, and generated files (the compiled Suricata rule set and YARA ruleset) are rebuilt by the target. The preview lists everything you need to finish by hand.
+
+**Checks before anything is created:**
+
+- Fleet Manager versions must match on major.minor (29.2.x to 29.2.y is fine).
+- The target must know every setting (checked with its own validation endpoint) and offer every exporter type. Fleet Manager lists exporter types only once a sensor has registered, so on a new Fleet Manager either register a sensor first or exclude exporters.
+- Licenses are per sensor. If the policy enables Suricata, YARA, SmartPCAP or asset classification and no target sensor holds that license, the import is blocked unless you allow it; with no sensors yet it warns instead.
+- No created object may clash with an existing name (use `name_suffix`).
+
+If a step fails, everything created so far is deleted again. Uploaded files stay behind unreferenced, because Fleet Manager has no API to delete them.
+
+Sample prompts:
+
+```text
+Copy the defaultPolicy sensor policy from prod to lab.
+```
+
+```text
+Export the defaultPolicy from prod, including snapshots of the connector-fed
+intel, then show me what importing it into lab would do, without the exporters.
+```
+
 ## Configuration
 
 Settings come from environment variables.
@@ -214,6 +245,7 @@ Settings come from environment variables.
 | `FLEET_MCP_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification. Not recommended. |
 | `FLEET_MCP_ENABLE_WRITES` | `false` | Register the tools that change Fleet Manager or install it. |
 | `FLEET_MCP_AUDIT_LOG` | `~/.local/share/fleet-mcp/audit.jsonl` | JSON Lines record of every executed change (secrets redacted). |
+| `FLEET_MCP_PACKAGES_DIR` | `~/.local/share/fleet-mcp/packages` | Exported policy packages. |
 | `FLEET_MCP_SECRETS_DIR` | `~/.local/share/fleet-mcp/secrets` | Secret store. |
 | `FLEET_MCP_SSH_USER` | | Default SSH user for host tools. |
 | `FLEET_MCP_SSH` | `ssh` | SSH client to run. |
@@ -253,10 +285,14 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_api_describe` | Search the REST spec and GraphQL schema |
 | `fm_api_write` | POST, PUT, PATCH or DELETE a REST endpoint (writes enabled) |
 | `fm_graphql_mutate` | Run a GraphQL mutation (writes enabled) |
+| `fm_policy_export` | Export a sensor policy and everything it uses to a local package |
+| `fm_policy_packages` | List exported packages |
+| `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
+| `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 

@@ -287,6 +287,9 @@ func safeName(s string) string {
 	return s
 }
 
+// PackageName turns any text into a valid package directory name.
+func PackageName(s string) string { return safeName(s) }
+
 // ValidPackageName reports whether name can name a package directory.
 func ValidPackageName(name string) bool {
 	return name != "" && name == safeName(name)

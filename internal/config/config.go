@@ -31,6 +31,7 @@ const (
 	EnvSSHBinary    = "FLEET_MCP_SSH"
 	EnvFleetsFile   = "FLEET_MCP_FLEETS_FILE"
 	EnvDefaultFleet = "FLEET_MCP_DEFAULT_FLEET"
+	EnvPackagesDir  = "FLEET_MCP_PACKAGES_DIR"
 )
 
 // Config holds fleet-mcp settings.
@@ -58,6 +59,8 @@ type Config struct {
 	FleetsFile string
 	// DefaultFleet names the Fleet Manager tools use when none is given.
 	DefaultFleet string
+	// PackagesDir holds exported policy packages.
+	PackagesDir string
 }
 
 // FleetConfigured reports whether a Fleet Manager API connection is set up.
@@ -116,6 +119,12 @@ func FromEnv() (Config, error) {
 	if c.SpecDir == "" {
 		if d := DataDir(); d != "" {
 			c.SpecDir = filepath.Join(d, "spec")
+		}
+	}
+	c.PackagesDir = os.Getenv(EnvPackagesDir)
+	if c.PackagesDir == "" {
+		if d := DataDir(); d != "" {
+			c.PackagesDir = filepath.Join(d, "packages")
 		}
 	}
 	c.AuditLog = os.Getenv(EnvAuditLog)

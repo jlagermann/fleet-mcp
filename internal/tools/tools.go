@@ -34,6 +34,9 @@ type Deps struct {
 	Secrets *secrets.Store
 	// SSHUser and SSHBinary are defaults for host tools.
 	SSHUser, SSHBinary string
+	// PackagesDir holds exported policy packages; empty disables the
+	// export, import and copy tools.
+	PackagesDir string
 }
 
 // target selects the Fleet Manager a tool call acts on.
@@ -73,7 +76,7 @@ func (d *Deps) maxBytes(requested int) int {
 
 // Instructions returns the text sent to MCP clients at initialization.
 func Instructions(writes bool) string {
-	s := instructions + hostInstructions
+	s := instructions + migrateInstructions + hostInstructions
 	if writes {
 		return s + writeInstructions
 	}
@@ -156,6 +159,12 @@ func Register(s *mcp.Server, d *Deps) {
 		registerGeneric(s, d)
 		if d.EnableWrites {
 			registerWrite(s, d)
+		}
+		if d.PackagesDir != "" {
+			registerMigrate(s, d)
+			if d.EnableWrites {
+				registerMigrateWrite(s, d)
+			}
 		}
 	}
 	if d.Secrets != nil {

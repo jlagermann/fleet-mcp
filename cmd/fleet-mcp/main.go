@@ -173,7 +173,7 @@ func serve() error {
 	}
 	deps := &tools.Deps{
 		Fleets: e.fleets, MaxBytes: cfg.MaxResponseBytes, EnableWrites: cfg.EnableWrites,
-		Secrets: e.secrets, SSHUser: cfg.SSHUser, SSHBinary: cfg.SSHBinary,
+		Secrets: e.secrets, SSHUser: cfg.SSHUser, SSHBinary: cfg.SSHBinary, PackagesDir: cfg.PackagesDir,
 	}
 	if cfg.EnableWrites {
 		if cfg.AuditLog == "" {

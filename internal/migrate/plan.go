@@ -139,6 +139,9 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 	targetExporters := obj(meta["exporter.metadata"])
 	cfg := map[string]any{}
 	dropExporters := opts.excluded("exporters")
+	// sendExporters is false when exporters are excluded or blocked; a
+	// blocked plan then reports one blocker instead of one per setting.
+	sendExporters := !dropExporters
 	if !dropExporters {
 		var missing []string
 		for _, t := range m.Features.Exporters {
@@ -150,12 +153,13 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 		if len(missing) > 0 {
 			p.block("the target Fleet Manager offers no %s exporter (it lists exporter types once a sensor has registered); exclude \"exporters\" or register a sensor first",
 				strings.Join(missing, ", "))
+			sendExporters = false
 		}
 	}
 	var unknown []string
 	for k, v := range m.Policy.Configuration {
 		if strings.HasPrefix(k, "bro.exporters.") {
-			if !dropExporters {
+			if sendExporters {
 				cfg[k] = v
 			}
 			continue

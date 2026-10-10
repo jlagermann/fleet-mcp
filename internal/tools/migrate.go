@@ -34,15 +34,14 @@ type importArgs struct {
 
 // importOptions are shared by fm_policy_import and fm_policy_copy.
 type importOptions struct {
-	Name            string   `json:"name,omitempty" jsonschema:"name for the new sensor policy (default: the exported name)"`
-	NameSuffix      string   `json:"name_suffix,omitempty" jsonschema:"appended to the name of every object created, e.g. \" (copy)\", to avoid name clashes"`
-	AllowUnlicensed bool     `json:"allow_unlicensed,omitempty" jsonschema:"import features (Suricata, YARA, SmartPCAP, ...) that no target sensor is licensed for"`
-	Exclude         []string `json:"exclude,omitempty" jsonschema:"parts to leave out: bundle, suricata, yara, exporters, input, intel, resource, ca_bundles"`
-	ConfirmToken    string   `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this import's preview; when it matches, the import runs"`
+	Name         string   `json:"name,omitempty" jsonschema:"name for the new sensor policy (default: the exported name)"`
+	NameSuffix   string   `json:"name_suffix,omitempty" jsonschema:"appended to the name of every object created, e.g. \" (copy)\", to avoid name clashes"`
+	Exclude      []string `json:"exclude,omitempty" jsonschema:"parts to leave out: bundle, suricata, yara, exporters, input, intel, resource, ca_bundles"`
+	ConfirmToken string   `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this import's preview; when it matches, the import runs"`
 }
 
 func (a importOptions) options() migrate.ImportOptions {
-	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, AllowUnlicensed: a.AllowUnlicensed, Exclude: a.Exclude}
+	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, Exclude: a.Exclude}
 }
 
 func (d *Deps) packageDir(name string) (string, error) {
@@ -151,7 +150,7 @@ func registerMigrateWrite(s *mcp.Server, d *Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_policy_import",
 		Description: "Import a policy package (from fm_policy_export) into a Fleet Manager as a new sensor policy with new Suricata policy, YARA ruleset, collections and bundle. Never changes existing objects; identical file sources already on the target are reused. " +
-			"The preview checks that Fleet Manager versions match on major.minor, that the target knows every setting and exporter type, that target sensors are licensed for the features the policy enables, and that no names clash. " +
+			"The preview checks that Fleet Manager versions match on major.minor, that the target knows every setting and exporter type, and that no names clash. It also reports, for information, how many target sensors are licensed for the features the policy enables; sensors never block an import. " +
 			"Two steps: call without confirm_token for the preview; after the user approves, call again with the same arguments plus confirm_token. If a step fails, everything created is deleted again.",
 		Annotations: &mcp.ToolAnnotations{Title: "Import sensor policy", DestructiveHint: &f, OpenWorldHint: &f},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a importArgs) (*mcp.CallToolResult, any, error) {
@@ -230,7 +229,7 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 			out["confirm_token"] = token
 			out["next"] = fmt.Sprintf("Show the plan, warnings and follow_up items to the user. After they approve importing into %s, call %s again with the same arguments plus package %q and confirm_token.", c.Name, tool, pkg)
 		} else {
-			out["next"] = "Resolve the blockers (or use name_suffix, exclude or allow_unlicensed where they apply) and preview again."
+			out["next"] = "Resolve the blockers (or use name_suffix or exclude where they apply) and preview again."
 		}
 		r, err := jsonResult(out)
 		return r, nil, err

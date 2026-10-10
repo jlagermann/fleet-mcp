@@ -191,8 +191,8 @@ func (a *applier) suricata(ctx context.Context, s *Suricata) (int64, error) {
 	if sources == nil {
 		update["sources"] = []any{}
 	}
-	if len(s.Settings) > 0 {
-		update["settings"] = s.Settings
+	if len(a.plan.suricataSettings) > 0 {
+		update["settings"] = a.plan.suricataSettings
 	}
 	if len(s.Config) > 0 {
 		update["config"] = s.Config
@@ -465,6 +465,7 @@ func (a *applier) verify(ctx context.Context) {
 			}
 		}
 	}
+	diffs = append(diffs, a.verifySuricata(ctx)...)
 	sort.Strings(diffs)
 	a.res.Verification = diffs
 }
@@ -476,4 +477,49 @@ func sameJSON(a, b any) bool {
 	_ = json.Unmarshal(ab, &av)
 	_ = json.Unmarshal(bb, &bv)
 	return reflect.DeepEqual(av, bv)
+}
+
+// verifySuricata compares the new Suricata policy with what was sent.
+// Fleet Manager does not store a setting whose value is the default, so a
+// missing setting with the default value is not a difference.
+func (a *applier) verifySuricata(ctx context.Context) []string {
+	var id int64
+	for _, c := range a.res.Created {
+		if c.Kind == "suricata policy" {
+			id = c.ID
+		}
+	}
+	if id == 0 {
+		return nil
+	}
+	var sp, defs map[string]any
+	if err := a.api.GetJSON(ctx, fmt.Sprintf("%s/%d", pathSuricata, id), nil, &sp); err != nil {
+		return []string{"could not read the new Suricata policy back: " + err.Error()}
+	}
+	_ = a.api.GetJSON(ctx, pathSuricataDefs, nil, &defs)
+	defaults := obj(defs["settings"])
+	got := obj(sp["settings"])
+	var diffs []string
+	for _, k := range sortedKeys(a.plan.suricataSettings) {
+		want := a.plan.suricataSettings[k]
+		g, ok := got[k]
+		switch {
+		case !ok && sameJSON(defaults[k], want):
+		case !ok:
+			diffs = append(diffs, "Suricata setting "+k+" is missing")
+		case !sameJSON(g, want):
+			diffs = append(diffs, "Suricata setting "+k+" differs")
+		}
+	}
+	s := a.m.Suricata
+	if str(sp["homeNet"]) != s.HomeNet {
+		diffs = append(diffs, "Suricata HOME_NET differs")
+	}
+	if truthy(sp["rulesAutomation"]) != s.RulesAutomation || truthy(sp["useModifierFiles"]) != s.UseModifierFiles {
+		diffs = append(diffs, "Suricata rulesAutomation or useModifierFiles differs")
+	}
+	if n := len(listOf(sp["sources"])); n != len(s.Sources) {
+		diffs = append(diffs, fmt.Sprintf("Suricata policy has %d sources, the package %d", n, len(s.Sources)))
+	}
+	return diffs
 }

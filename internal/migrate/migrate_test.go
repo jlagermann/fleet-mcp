@@ -131,9 +131,9 @@ func TestPlanPatchVersionsMatch(t *testing.T) {
 	if !p.Ready() {
 		t.Fatalf("blockers %v", p.Blockers)
 	}
-	// No sensors: the license cannot be verified, which warns.
-	if len(p.Licenses) != 1 || p.Licenses[0].Status != "unverified" {
-		t.Errorf("licenses %+v", p.Licenses)
+	// Sensors never matter for an import: no sensors, no warning.
+	if len(p.Licenses) != 1 || p.Licenses[0].Status != "no sensors" || strings.Contains(strings.Join(p.Warnings, " "), "licens") {
+		t.Errorf("licenses %+v warnings %v", p.Licenses, p.Warnings)
 	}
 }
 
@@ -146,12 +146,9 @@ func TestPlanLicenses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Ready() || p.Licenses[0].Status != "unlicensed" {
-		t.Fatalf("want an unlicensed blocker: %v %+v", p.Blockers, p.Licenses)
-	}
-	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{AllowUnlicensed: true})
-	if err != nil || !p.Ready() {
-		t.Fatalf("allow_unlicensed: %v %v", err, p.Blockers)
+	// Unlicensed sensors are reported but neither block nor warn.
+	if !p.Ready() || strings.Contains(strings.Join(p.Warnings, " "), "licens") || p.Licenses[0].Status != "unlicensed" {
+		t.Fatalf("unlicensed: %v %v %+v", p.Blockers, p.Warnings, p.Licenses)
 	}
 	tgt.sensors = []any{licensedSensor("suricata"), licensedSensor()}
 	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
@@ -320,4 +317,33 @@ func TestReuseIdenticalSource(t *testing.T) {
 
 func fakeFileFor(name, content string) fakeFile {
 	return fakeFile{name: name, content: []byte(content)}
+}
+
+func TestUnknownSuricataSettingsReported(t *testing.T) {
+	dir, m := exportPackage(t, false)
+	tgt := newFakeFM(t, "29.2.2-100")
+	ctx := context.Background()
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	if err != nil || !p.Ready() {
+		t.Fatalf("plan: %v %v", err, p.Blockers)
+	}
+	if !strings.Contains(strings.Join(p.Warnings, " "), "suricata.profiling.enable") {
+		t.Errorf("unknown Suricata setting not warned: %v", p.Warnings)
+	}
+	res, err := migrate.Apply(ctx, tgt.client, dir, m, p, migrate.ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Verification) > 0 {
+		t.Errorf("verification: %v", res.Verification)
+	}
+	for _, sp := range tgt.suricata {
+		settings := sp["settings"].(map[string]any)
+		if _, sent := settings["suricata.profiling.enable"]; sent {
+			t.Error("unknown setting was sent")
+		}
+		if settings["suricata.address_groups.dns_servers"] != "[10.0.0.53]" {
+			t.Errorf("settings %v", settings)
+		}
+	}
 }

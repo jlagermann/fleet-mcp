@@ -35,6 +35,8 @@ const (
 	pathBundle         = "/fleet/v1/sensor/bundle"
 	pathSuricata       = "/fleet/v1/suricata"
 	pathSuricataList   = "/fleet/v1/suricata/policies"
+	pathSuricataMeta   = "/fleet/v1/suricata/metadata"
+	pathSuricataDefs   = "/fleet/v1/suricata/defaults"
 	pathCatalog        = "/fleet/v1/sensor/catalog"
 	pathFiles          = "/fleet/v1/filemgr/files/"
 	pathStores         = "/fleet/v1/filemgr/stores/"

@@ -212,7 +212,7 @@ Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy`
 
 - Fleet Manager versions must match on major.minor (29.2.x to 29.2.y is fine).
 - The target must know every setting (checked with its own validation endpoint) and offer every exporter type. Fleet Manager lists exporter types only once a sensor has registered, so on a new Fleet Manager either register a sensor first or exclude exporters.
-- Licenses are per sensor. If the policy enables Suricata, YARA, SmartPCAP or asset classification and no target sensor holds that license, the import is blocked unless you allow it; with no sensors yet it warns instead.
+- Sensors play no part in an import: a policy can be imported, and assigned to a group, before any sensor exists. For information, the preview shows how many target sensors hold the licenses for the features the policy enables (Suricata, YARA, SmartPCAP, asset classification).
 - No created object may clash with an existing name (use `name_suffix`).
 
 If a step fails, everything created so far is deleted again. Uploaded files stay behind unreferenced, because Fleet Manager has no API to delete them.

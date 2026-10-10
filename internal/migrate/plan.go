@@ -20,8 +20,6 @@ type ImportOptions struct {
 	// NameSuffix is appended to the name of every object created, to
 	// avoid clashing with existing objects on the target.
 	NameSuffix string `json:"name_suffix,omitempty"`
-	// AllowUnlicensed imports features no target sensor is licensed for.
-	AllowUnlicensed bool `json:"allow_unlicensed,omitempty"`
 	// Exclude leaves parts (see Parts) out of the import.
 	Exclude []string `json:"exclude,omitempty"`
 }
@@ -52,6 +50,8 @@ type Plan struct {
 	reuse map[string]int64
 	// configuration is the policy configuration that will be sent.
 	configuration map[string]any
+	// suricataSettings are the Suricata settings that will be sent.
+	suricataSettings map[string]any
 }
 
 // PlannedObject is one object an import creates or reuses.
@@ -63,11 +63,12 @@ type PlannedObject struct {
 }
 
 // LicenseCheck reports how many target sensors hold a feature's license.
+// It is informational: it never blocks or warns.
 type LicenseCheck struct {
 	Feature  string `json:"feature"`
 	Licensed int    `json:"licensed_sensors"`
 	Sensors  int    `json:"sensors"`
-	Status   string `json:"status"` // licensed, partial, unlicensed, unverified
+	Status   string `json:"status"` // licensed, partial, unlicensed, no sensors
 }
 
 // Ready reports whether the plan can be applied.
@@ -119,7 +120,12 @@ func BuildPlan(ctx context.Context, api API, fleetName string, m *Manifest, opts
 		return nil, err
 	}
 	p.configuration = p.planConfiguration(m, opts, meta)
-	if err := p.checkLicenses(ctx, api, m, opts); err != nil {
+	if m.Suricata != nil && !opts.excluded("suricata") {
+		if err := p.planSuricataSettings(ctx, api, m.Suricata); err != nil {
+			return nil, err
+		}
+	}
+	if err := p.checkLicenses(ctx, api, m); err != nil {
 		return nil, err
 	}
 	if err := p.validateConfiguration(ctx, api); err != nil {
@@ -198,9 +204,11 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 	return cfg
 }
 
-// checkLicenses compares the licensed features the policy enables with
-// the licenses of the target's sensors.
-func (p *Plan) checkLicenses(ctx context.Context, api API, m *Manifest, opts ImportOptions) error {
+// checkLicenses reports, for information only, how many target sensors
+// hold the licenses for the features the policy enables. Importing a
+// policy never depends on sensors; licenses matter when a policy is
+// assigned to a group with sensors in it.
+func (p *Plan) checkLicenses(ctx context.Context, api API, m *Manifest) error {
 	if len(m.Features.Licensed) == 0 {
 		return nil
 	}
@@ -220,18 +228,11 @@ func (p *Plan) checkLicenses(ctx context.Context, api API, m *Manifest, opts Imp
 		}
 		switch {
 		case lc.Sensors == 0:
-			lc.Status = "unverified"
-			p.warn("cannot verify the %s license: the target has no sensors yet; check licenses before assigning the policy to a group", f)
+			lc.Status = "no sensors"
 		case lc.Licensed == 0:
 			lc.Status = "unlicensed"
-			if opts.AllowUnlicensed {
-				p.warn("no target sensor is licensed for %s; it is imported anyway (allow_unlicensed)", f)
-			} else {
-				p.block("no target sensor is licensed for %s, which the policy enables; license it or import with allow_unlicensed", f)
-			}
 		case lc.Licensed < lc.Sensors:
 			lc.Status = "partial"
-			p.warn("only %d of %d target sensors are licensed for %s", lc.Licensed, lc.Sensors, f)
 		default:
 			lc.Status = "licensed"
 		}
@@ -457,4 +458,48 @@ func loadNames(ctx context.Context, api API) (*targetNames, error) {
 		}
 	}
 	return t, nil
+}
+
+// planSuricataSettings drops Suricata settings the target's Suricata
+// schema does not know (Fleet Manager would silently discard them) and
+// reports them.
+func (p *Plan) planSuricataSettings(ctx context.Context, api API, s *Suricata) error {
+	var meta map[string]any
+	if err := api.GetJSON(ctx, pathSuricataMeta, nil, &meta); err != nil {
+		return err
+	}
+	props := obj(meta["properties"])
+	p.suricataSettings = map[string]any{}
+	var unknown []string
+	for k, v := range s.Settings {
+		if len(props) > 0 && !schemaHas(props, k) {
+			unknown = append(unknown, k)
+			continue
+		}
+		p.suricataSettings[k] = v
+	}
+	sort.Strings(unknown)
+	for _, k := range unknown {
+		p.FollowUp = append(p.FollowUp, Omission{Part: "suricata", Item: k,
+			Reason: "the target's Suricata settings schema does not have this setting (left over from an older version?)",
+			Action: "check whether a current setting replaces " + k})
+	}
+	if len(unknown) > 0 {
+		p.warn("%d Suricata settings are unknown to the target and are not copied: %s", len(unknown), strings.Join(unknown, ", "))
+	}
+	return nil
+}
+
+// schemaHas reports whether a settings schema defines key, directly or
+// through a "prefix.*" pattern.
+func schemaHas(props map[string]any, key string) bool {
+	if _, ok := props[key]; ok {
+		return true
+	}
+	for k := range props {
+		if prefix, ok := strings.CutSuffix(k, ".*"); ok && strings.HasPrefix(key, prefix+".") {
+			return true
+		}
+	}
+	return false
 }

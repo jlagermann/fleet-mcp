@@ -211,6 +211,14 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 			f.deleted = append(f.deleted, fmt.Sprintf("bundle %d", bid))
 			reply(w, 200, map[string]any{})
 		}
+	case m == "GET" && p == "/suricata/metadata":
+		reply(w, 200, map[string]any{"properties": map[string]any{
+			"suricata.address_groups.dns_servers": map[string]any{"type": "string"},
+			"suricata.port_groups.vxlan_ports":    map[string]any{"type": "string"},
+			"suricata-tenant-rules-file-id.*":     map[string]any{"type": "integer"},
+		}})
+	case m == "GET" && p == "/suricata/defaults":
+		reply(w, 200, map[string]any{"settings": map[string]any{"suricata.port_groups.vxlan_ports": "4789"}})
 	case m == "GET" && p == "/suricata/policies":
 		reply(w, 200, listOfMaps(f.suricata))
 	case m == "POST" && p == "/suricata":
@@ -410,7 +418,7 @@ func seedSource(t *testing.T) (*fakeFM, int64) {
 	sid := f.id()
 	f.suricata[sid] = map[string]any{
 		"id": sid, "name": "lab-suricata", "description": "d", "homeNet": "[10.0.0.0/8]", "rulesAutomation": true,
-		"useModifierFiles": true, "settings": map[string]any{"suricata.address_groups.dns_servers": "[10.0.0.53]"},
+		"useModifierFiles": true, "settings": map[string]any{"suricata.address_groups.dns_servers": "[10.0.0.53]", "suricata.profiling.enable": false},
 		"config": map[string]any{"srmEnableFlowBits": false},
 		"sources": []any{
 			map[string]any{"name": "local", "entityType": "file", "fileId": float64(rules), "filename": "local.rules", "enabled": true},

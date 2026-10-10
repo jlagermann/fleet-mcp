@@ -242,11 +242,11 @@ intel, then show me what importing it into lab would do, without the exporters.
 
 ## Move a sensor to another Fleet Manager
 
-Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), so `fm_sensor_move` logs in to the sensor over SSH as `diag-shell` and runs:
+Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), so `fm_sensor_move` logs in to the sensor over SSH as `diag-shell` and runs `corelight-client configuration update` in three steps, about 30 seconds apart:
 
-```sh
-corelight-client configuration update --fleet.community_string=<target's> --fleet.server=<target host>:1443 --fleet.server_sslname=''
-```
+1. `--fleet.enable=false`: disconnect from the current Fleet Manager, so it cannot put its `fleet.server_sslname` back.
+2. `--fleet.community_string=<target's> --fleet.server=<target host>:1443 --fleet.server_sslname=''`: `server_sslname` comes from each Fleet Manager's license, which may differ, so it is cleared; the new Fleet Manager sets its own when the sensor connects.
+3. `--fleet.enable=true`: connect to the new Fleet Manager.
 
 - The sensor address comes from the source Fleet Manager; the target's community string from the secret store (stored by fleet-mcp's install, or `fleet-mcp secret set community-string -host <fleet>`).
 - `diag-shell` uses the sensor's `admin` password: store it once with `fleet-mcp secret set sensor-admin-password`.

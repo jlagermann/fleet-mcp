@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -83,7 +84,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_move",
-		Description: "Move a sensor from one Fleet Manager (fleet) to another (target_fleet): fleet-mcp logs in to the sensor over SSH as diag-shell (password: the sensor-admin-password secret) and runs corelight-client configuration update with the target's address and community string, clearing fleet.server_sslname. " +
+		Description: "Move a sensor from one Fleet Manager (fleet) to another (target_fleet): fleet-mcp logs in to the sensor over SSH as diag-shell (password: the sensor-admin-password secret) and runs corelight-client configuration update in three steps: fleet.enable=false (so the current Fleet Manager cannot put its fleet.server_sslname back), then the target's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
 			"The sensor keeps its configuration: it appears on the target in the UNASSIGNED group and only takes a new configuration when it is put in a sensor group with a policy. Its entry on the source Fleet Manager goes offline. " +
 			"Two steps: call without confirm_token for a preview (sensor, addresses, SSH host key fingerprint, which secrets are present); after the user approves, call again with the same arguments plus confirm_token.",
 		Annotations: &mcp.ToolAnnotations{Title: "Move sensor", DestructiveHint: &t, OpenWorldHint: &f},
@@ -180,9 +181,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 		}
 		pw, _ := d.Secrets.GetString("", secrets.SensorPassword)
 		cs, _ := d.Secrets.GetString(tgt.Name, secrets.CommunityString)
-		cmd := "corelight-client configuration update --fleet.community_string=" + host.Quote(cs) +
-			" --fleet.server=" + host.Quote(addr) + " --fleet.server_sslname=''"
-		output, runErr := sensorssh.Run(ctx, sshHost, pw, hk.Fingerprint, cmd, pins, cs, pw)
+		output, runErr := moveSteps(ctx, sshHost, pw, hk.Fingerprint, pins, cs, addr, stepPause)
 
 		out := map[string]any{"executed": true, "sensor": name, "uid": uid, "from": src.Name, "to": tgt.Name, "output": output}
 		if runErr == nil {
@@ -227,4 +226,39 @@ func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, li
 		case <-time.After(10 * time.Second):
 		}
 	}
+}
+
+// stepPause lets the sensor apply each configuration change; corelight-
+// client returns while the change is still in progress.
+var stepPause = 30 * time.Second
+
+// moveSteps re-points a sensor in three steps. Disconnecting first matters:
+// fleet.server_sslname comes from the Fleet Manager's license and the
+// connected Fleet Manager would put its own value back. With fleet
+// disabled, the cleared value stays cleared until the sensor connects to
+// the new Fleet Manager, which then sets its own.
+func moveSteps(ctx context.Context, sshHost, pw, fingerprint string, pins sensorssh.Pins, cs, addr string, pause time.Duration) (string, error) {
+	steps := []struct{ label, cmd string }{
+		{"disconnect from the current Fleet Manager", "corelight-client configuration update --fleet.enable=false"},
+		{"point at the new Fleet Manager", "corelight-client configuration update --fleet.community_string=" + host.Quote(cs) +
+			" --fleet.server=" + host.Quote(addr) + " --fleet.server_sslname=''"},
+		{"connect to the new Fleet Manager", "corelight-client configuration update --fleet.enable=true"},
+	}
+	var log strings.Builder
+	for i, s := range steps {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return log.String(), ctx.Err()
+			case <-time.After(pause):
+			}
+		}
+		fmt.Fprintf(&log, "step %d: %s\n", i+1, s.label)
+		out, err := sensorssh.Run(ctx, sshHost, pw, fingerprint, s.cmd, pins, cs, pw)
+		log.WriteString(out)
+		if err != nil {
+			return log.String(), fmt.Errorf("step %d (%s): %w", i+1, s.label, err)
+		}
+	}
+	return log.String(), nil
 }

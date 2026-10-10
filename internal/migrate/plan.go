@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -22,6 +23,10 @@ type ImportOptions struct {
 	NameSuffix string `json:"name_suffix,omitempty"`
 	// Exclude leaves parts (see Parts) out of the import.
 	Exclude []string `json:"exclude,omitempty"`
+	// Complete adds parts an earlier import of the same package into the
+	// same Fleet Manager left out (today: exporters) to the policy that
+	// import created. Name, NameSuffix and Exclude do not apply.
+	Complete bool `json:"complete,omitempty"`
 }
 
 func (o ImportOptions) excluded(part string) bool { return slices.Contains(o.Exclude, part) }
@@ -42,9 +47,12 @@ type Plan struct {
 	Licenses      []LicenseCheck    `json:"licenses,omitempty"`
 	Exporters     []string          `json:"exporters,omitempty"`
 	ConfigErrors  map[string]string `json:"config_errors,omitempty"`
-	Blockers      []string          `json:"blockers,omitempty"`
-	Warnings      []string          `json:"warnings,omitempty"`
-	FollowUp      []Omission        `json:"follow_up,omitempty"`
+	// Decisions are questions for the user; the plan is not ready until
+	// each is answered by changing the options (see Decision.Resolve).
+	Decisions []Decision `json:"decisions,omitempty"`
+	Blockers  []string   `json:"blockers,omitempty"`
+	Warnings  []string   `json:"warnings,omitempty"`
+	FollowUp  []Omission `json:"follow_up,omitempty"`
 
 	// reuse maps "TYPE|alias|name" to an existing identical file source.
 	reuse map[string]int64
@@ -52,6 +60,18 @@ type Plan struct {
 	configuration map[string]any
 	// suricataSettings are the Suricata settings that will be sent.
 	suricataSettings map[string]any
+	// completeInto is the existing policy a completion updates.
+	completeInto int64
+	// deferred are the parts this import leaves for a later completion.
+	deferred []string
+}
+
+// Decision is a question the user must answer before the import runs.
+type Decision struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	// Resolve says how each answer changes the request.
+	Resolve map[string]string `json:"resolve"`
 }
 
 // PlannedObject is one object an import creates or reuses.
@@ -72,7 +92,7 @@ type LicenseCheck struct {
 }
 
 // Ready reports whether the plan can be applied.
-func (p *Plan) Ready() bool { return len(p.Blockers) == 0 }
+func (p *Plan) Ready() bool { return len(p.Blockers) == 0 && len(p.Decisions) == 0 }
 
 func (p *Plan) block(format string, a ...any) {
 	p.Blockers = append(p.Blockers, fmt.Sprintf(format, a...))
@@ -88,7 +108,12 @@ func (p *Plan) create(kind, name, detail string) {
 // licenses, exporter types, settings the target does not know, and name
 // clashes. It changes nothing on the target (the configuration check uses
 // Fleet Manager's validation endpoint, which does not save).
-func BuildPlan(ctx context.Context, api API, fleetName string, m *Manifest, opts ImportOptions) (*Plan, error) {
+// dir is the package directory; a completion (opts.Complete) reads the
+// earlier import from it.
+func BuildPlan(ctx context.Context, api API, fleetName, dir string, m *Manifest, opts ImportOptions) (*Plan, error) {
+	if opts.Complete && (opts.Name != "" || opts.NameSuffix != "" || len(opts.Exclude) > 0) {
+		return nil, errors.New("complete adds to the policy an earlier import created; name, name_suffix and exclude do not apply")
+	}
 	for _, x := range opts.Exclude {
 		if !slices.Contains(Parts, x) {
 			return nil, fmt.Errorf("unknown part %q to exclude (parts: %s)", x, strings.Join(Parts, ", "))
@@ -119,6 +144,18 @@ func BuildPlan(ctx context.Context, api API, fleetName string, m *Manifest, opts
 	if err := api.GetJSON(ctx, pathPolicyMetadata, nil, &meta); err != nil {
 		return nil, err
 	}
+	if opts.Complete {
+		if err := p.planCompletion(ctx, api, dir, m, meta); err != nil {
+			return nil, err
+		}
+		if p.Ready() && len(p.configuration) > 0 {
+			if err := p.validateConfiguration(ctx, api); err != nil {
+				return nil, err
+			}
+		}
+		sort.Strings(p.Blockers)
+		return p, nil
+	}
 	p.configuration = p.planConfiguration(m, opts, meta)
 	if m.Suricata != nil && !opts.excluded("suricata") {
 		if err := p.planSuricataSettings(ctx, api, m.Suricata); err != nil {
@@ -148,17 +185,19 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 	// sendExporters is false when exporters are excluded or blocked; a
 	// blocked plan then reports one blocker instead of one per setting.
 	sendExporters := !dropExporters
-	if !dropExporters {
-		var missing []string
-		for _, t := range m.Features.Exporters {
-			if _, ok := targetExporters[t]; !ok {
-				missing = append(missing, t)
-			}
-		}
+	if !dropExporters && len(m.Features.Exporters) > 0 {
 		p.Exporters = m.Features.Exporters
-		if len(missing) > 0 {
-			p.block("the target Fleet Manager offers no %s exporter (it lists exporter types once a sensor has registered); exclude \"exporters\" or register a sensor first",
-				strings.Join(missing, ", "))
+		if missing := missingExporterTypes(m, targetExporters); len(missing) > 0 {
+			names := exporterNames(m.Policy.Configuration)
+			p.Decisions = append(p.Decisions, Decision{
+				ID: "exporters",
+				Question: fmt.Sprintf("The %d exporters (%s) cannot be migrated yet: %s offers no %s exporter type until a sensor is attached to it. Continue with everything else and add the exporters later?",
+					len(names), strings.Join(names, ", "), p.Fleet, strings.Join(missing, ", ")),
+				Resolve: map[string]string{
+					"yes": `import with exclude ["exporters"]; after a sensor is attached, import the same package again with complete: true to add the exporters to the policy`,
+					"no":  "attach a sensor to the target Fleet Manager first, then preview again",
+				},
+			})
 			sendExporters = false
 		}
 	}
@@ -176,25 +215,13 @@ func (p *Plan) planConfiguration(m *Manifest, opts ImportOptions, meta map[strin
 		}
 		cfg[k] = v
 	}
-	if dropExporters {
-		// The exporters are recreated by hand, tokens included.
-		kept := p.FollowUp[:0]
-		for _, o := range p.FollowUp {
-			if o.Part != "exporters" {
-				kept = append(kept, o)
-			}
-		}
-		p.FollowUp = kept
-		var names []string
-		for k, v := range m.Policy.Configuration {
-			if inst, field, ok := exporterKey(k); ok && field == "name" {
-				names = append(names, fmt.Sprintf("%s (%s)", str(v), inst))
-			}
-		}
-		sort.Strings(names)
-		for _, n := range names {
-			p.FollowUp = append(p.FollowUp, Omission{Part: "exporters", Item: n, Reason: "excluded from this import",
-				Action: "recreate exporter " + n + " on the target policy, with its token"})
+	if dropExporters && len(m.Features.Exporters) > 0 {
+		// Left for a completion run; their tokens stay on the follow-up
+		// list because they are entered after the completion.
+		p.deferred = append(p.deferred, "exporters")
+		for _, n := range exporterNames(m.Policy.Configuration) {
+			p.FollowUp = append(p.FollowUp, Omission{Part: "exporters", Item: n, Reason: "left out of this import",
+				Action: "after a sensor is attached to " + p.Fleet + ", import this package again with complete: true to add it"})
 		}
 	}
 	if len(unknown) > 0 {

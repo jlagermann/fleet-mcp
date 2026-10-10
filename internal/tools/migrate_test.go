@@ -36,6 +36,16 @@ func migrateSession(t *testing.T) (*mcp.ClientSession, *fleettest.Server, string
 	if err := os.WriteFile(filepath.Join(pkgs, "pkg1", migrate.ManifestFile), mb, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// pkg2 has an exporter, which alpha (no sensors) cannot take yet.
+	m.Policy.Configuration = map[string]any{"bro.exporters.instances": "abcdefghij", "bro.exporters.abcdefghij.type": "hec", "bro.exporters.abcdefghij.name": "Splunk"}
+	m.Features.Exporters = []string{"hec"}
+	if err := os.MkdirAll(filepath.Join(pkgs, "pkg2"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mb, _ = json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(pkgs, "pkg2", migrate.ManifestFile), mb, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	a.Route("GET /fleet/v1/sensor/policy/metadata", map[string]any{
 		"configuration.metadata": map[string]any{"properties": map[string]any{"bro.analyzers.mqtt.enable": map[string]any{"cl:type": "Boolean"}}},
 		"exporter.metadata":      map[string]any{},
@@ -120,6 +130,8 @@ func TestPolicyImportGuards(t *testing.T) {
 		{"fm_policy_copy", map[string]any{"fleet": "alpha", "source_fleet": "beta", "policy": "lab", "confirm_token": "x"}, "needs the package"},
 		{"fm_policy_copy", map[string]any{"fleet": "beta", "source_fleet": "alpha", "policy": "lab"}, "read-only"},
 		{"fm_policy_copy", map[string]any{"fleet": "alpha", "source_fleet": "alpha", "policy": "lab"}, "same Fleet Manager"},
+		{"fm_policy_copy", map[string]any{"fleet": "alpha", "source_fleet": "beta", "policy": "lab", "complete": true}, "fm_policy_import with complete"},
+		{"fm_policy_import", map[string]any{"fleet": "alpha", "package": "pkg1", "complete": true}, "nothing to complete"},
 	} {
 		out, isErr := call(t, cs, tc.tool, tc.args)
 		if !isErr || !strings.Contains(out, tc.want) {
@@ -133,5 +145,24 @@ func TestPolicyPackages(t *testing.T) {
 	out, isErr := call(t, cs, "fm_policy_packages", nil)
 	if isErr || !strings.Contains(out, `"package":"pkg1"`) || !strings.Contains(out, `"source_fleet":"beta"`) {
 		t.Fatalf("packages: %s", out)
+	}
+}
+
+func TestPolicyImportAsksAboutExporters(t *testing.T) {
+	cs, _, _ := migrateSession(t)
+	out, isErr := call(t, cs, "fm_policy_import", map[string]any{"fleet": "alpha", "package": "pkg2"})
+	if isErr {
+		t.Fatal(out)
+	}
+	var p map[string]any
+	if err := json.Unmarshal([]byte(out), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p["ready"] != false || p["confirm_token"] != nil || !strings.Contains(p["next"].(string), "Ask the user") || !strings.Contains(out, `"id":"exporters"`) {
+		t.Fatalf("preview: %s", out)
+	}
+	out, isErr = call(t, cs, "fm_policy_import", map[string]any{"fleet": "alpha", "package": "pkg2", "exclude": []string{"exporters"}})
+	if isErr || !strings.Contains(out, `"ready":true`) || !strings.Contains(out, "complete: true") {
+		t.Fatalf("after yes: %s", out)
 	}
 }

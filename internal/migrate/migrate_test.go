@@ -110,9 +110,9 @@ func TestExportSnapshotsConnectorSources(t *testing.T) {
 }
 
 func TestPlanBlocksVersionMismatch(t *testing.T) {
-	_, m := exportPackage(t, false)
+	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.3.0-1")
-	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +122,9 @@ func TestPlanBlocksVersionMismatch(t *testing.T) {
 }
 
 func TestPlanPatchVersionsMatch(t *testing.T) {
-	_, m := exportPackage(t, false)
+	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.5-7")
-	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,11 +138,11 @@ func TestPlanPatchVersionsMatch(t *testing.T) {
 }
 
 func TestPlanLicenses(t *testing.T) {
-	_, m := exportPackage(t, false)
+	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.2-100")
 	tgt.sensors = []any{licensedSensor("yara")}
 	ctx := context.Background()
-	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,35 +151,33 @@ func TestPlanLicenses(t *testing.T) {
 		t.Fatalf("unlicensed: %v %v %+v", p.Blockers, p.Warnings, p.Licenses)
 	}
 	tgt.sensors = []any{licensedSensor("suricata"), licensedSensor()}
-	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if !p.Ready() || p.Licenses[0].Status != "partial" || p.Licenses[0].Licensed != 1 {
 		t.Fatalf("partial: %v %+v", p.Blockers, p.Licenses)
 	}
 }
 
 func TestPlanExportersAndSettings(t *testing.T) {
-	_, m := exportPackage(t, false)
+	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.2-100")
 	tgt.exporters = map[string]any{}
 	delete(tgt.props, "bro.export.splunk.index")
 	ctx := context.Background()
-	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := strings.Join(p.Blockers, "\n")
-	if !strings.Contains(b, "no hec exporter") || !strings.Contains(b, "bro.export.splunk.index") {
+	// Missing exporter types are a question for the user, not a blocker.
+	if len(p.Decisions) != 1 || p.Decisions[0].ID != "exporters" || !strings.Contains(p.Decisions[0].Question, "Splunk (hec)") || p.Ready() {
+		t.Fatalf("decisions %+v", p.Decisions)
+	}
+	if b := strings.Join(p.Blockers, "\n"); strings.Contains(b, "exporter") || !strings.Contains(b, "bro.export.splunk.index") {
 		t.Fatalf("blockers %v", p.Blockers)
 	}
 	tgt.props["bro.export.splunk.index"] = map[string]any{"cl:type": "Text"}
-	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{Exclude: []string{"exporters"}})
-	if err != nil || !p.Ready() {
-		t.Fatalf("exclude exporters: %v %v", err, p.Blockers)
-	}
-	for _, o := range p.FollowUp {
-		if strings.Contains(o.Item, "hec_token") {
-			t.Errorf("token follow-up kept although the exporter is excluded: %+v", o)
-		}
+	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{Exclude: []string{"exporters"}})
+	if err != nil || !p.Ready() || len(p.Decisions) != 0 {
+		t.Fatalf("exclude exporters: %v %v %v", err, p.Blockers, p.Decisions)
 	}
 	found := false
 	for _, o := range p.FollowUp {
@@ -188,21 +186,21 @@ func TestPlanExportersAndSettings(t *testing.T) {
 	if !found {
 		t.Errorf("excluded exporter not listed for follow-up: %+v", p.FollowUp)
 	}
-	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{Exclude: []string{"nope"}}); err == nil {
+	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{Exclude: []string{"nope"}}); err == nil {
 		t.Error("unknown part accepted")
 	}
 }
 
 func TestPlanNameClash(t *testing.T) {
-	_, m := exportPackage(t, false)
+	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.2-100")
 	tgt.policies[1] = map[string]any{"id": 1, "name": "lab-policy"}
 	ctx := context.Background()
-	p, _ := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, _ := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if p.Ready() {
 		t.Fatal("name clash not blocked")
 	}
-	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{NameSuffix: "-copy"})
+	p, _ = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{NameSuffix: "-copy"})
 	if !p.Ready() || p.PolicyName != "lab-policy-copy" {
 		t.Fatalf("suffix: %v %s", p.Blockers, p.PolicyName)
 	}
@@ -213,7 +211,7 @@ func TestApplyCopiesEverything(t *testing.T) {
 	tgt := newFakeFM(t, "29.2.2-100")
 	ctx := context.Background()
 	opts := migrate.ImportOptions{Name: "copied"}
-	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, opts)
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, opts)
 	if err != nil || !p.Ready() {
 		t.Fatalf("plan: %v %v", err, p.Blockers)
 	}
@@ -272,7 +270,7 @@ func TestApplyRollsBack(t *testing.T) {
 	tgt := newFakeFM(t, "29.2.2-100")
 	tgt.failOn = "createFileCollection"
 	ctx := context.Background()
-	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil || !p.Ready() {
 		t.Fatalf("plan: %v %v", err, p.Blockers)
 	}
@@ -292,7 +290,7 @@ func TestApplyRefusesTamperedPackage(t *testing.T) {
 	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.2-100")
 	ctx := context.Background()
-	p, _ := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, _ := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(m.Bundle.File.Path)), []byte("evil"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -307,12 +305,12 @@ func TestReuseIdenticalSource(t *testing.T) {
 	src := m.Collections["intel"].Sources[0]
 	content, _ := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.File.Path)))
 	tgt.sources[5] = map[string]any{"id": int64(5), "alias": src.Alias, "name": src.Name, "type": "INTEL", "fileId": tgt.addFile(src.Name, content)}
-	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(context.Background(), tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil || !p.Ready() || len(p.Reuses) != 1 || p.Reuses[0].ID != 5 {
 		t.Fatalf("plan %v %+v %v", err, p.Reuses, p.Blockers)
 	}
 	tgt.files[tgt.sources[5]["fileId"].(int64)] = fakeFileFor(src.Name, "different")
-	p, _ = migrate.BuildPlan(context.Background(), tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, _ = migrate.BuildPlan(context.Background(), tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if p.Ready() {
 		t.Fatal("different content with the same alias/name was not blocked")
 	}
@@ -326,7 +324,7 @@ func TestUnknownSuricataSettingsReported(t *testing.T) {
 	dir, m := exportPackage(t, false)
 	tgt := newFakeFM(t, "29.2.2-100")
 	ctx := context.Background()
-	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", m, migrate.ImportOptions{})
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{})
 	if err != nil || !p.Ready() {
 		t.Fatalf("plan: %v %v", err, p.Blockers)
 	}
@@ -348,5 +346,80 @@ func TestUnknownSuricataSettingsReported(t *testing.T) {
 		if settings["suricata.address_groups.dns_servers"] != "[10.0.0.53]" {
 			t.Errorf("settings %v", settings)
 		}
+	}
+}
+
+func TestDeferAndCompleteExporters(t *testing.T) {
+	dir, m := exportPackage(t, false)
+	tgt := newFakeFM(t, "29.2.2-100")
+	hec := tgt.exporters
+	tgt.exporters = map[string]any{} // no sensor attached yet
+	ctx := context.Background()
+
+	// Continue without the exporters.
+	opts := migrate.ImportOptions{Exclude: []string{"exporters"}}
+	p, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, opts)
+	if err != nil || !p.Ready() {
+		t.Fatalf("plan: %v %v %v", err, p.Blockers, p.Decisions)
+	}
+	res, err := migrate.Apply(ctx, tgt.client, dir, m, p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := tgt.policies[res.PolicyID]["configuration"].(map[string]any)
+	if _, ok := cfg["bro.exporters.instances"]; ok {
+		t.Fatal("exporters sent although excluded")
+	}
+	recs, _ := migrate.ReadImports(dir)
+	if len(recs) != 1 || recs[0].PolicyID != res.PolicyID || strings.Join(recs[0].Deferred, ",") != "exporters" {
+		t.Fatalf("records %+v", recs)
+	}
+
+	complete := migrate.ImportOptions{Complete: true}
+	// Still no sensor: completion is blocked.
+	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, complete)
+	if err != nil || p.Ready() || !strings.Contains(strings.Join(p.Blockers, " "), "attach a sensor") {
+		t.Fatalf("completion without exporter types: %v %v", err, p.Blockers)
+	}
+
+	// A sensor is attached: the exporter types appear.
+	tgt.exporters = hec
+	p, err = migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, complete)
+	if err != nil || !p.Ready() || len(p.Creates) != 1 || p.Creates[0].Name != "Splunk (hec)" {
+		t.Fatalf("completion plan: %v %v %+v", err, p.Blockers, p.Creates)
+	}
+	if p.PolicyName != "lab-policy" {
+		t.Errorf("policy name %q", p.PolicyName)
+	}
+	res2, err := migrate.Apply(ctx, tgt.client, dir, m, p, complete)
+	if err != nil || len(res2.Verification) > 0 || res2.PolicyID != res.PolicyID {
+		t.Fatalf("completion: %v %+v", err, res2)
+	}
+	if len(tgt.policies) != 1 {
+		t.Fatal("completion created a policy")
+	}
+	cfg = tgt.policies[res.PolicyID]["configuration"].(map[string]any)
+	if cfg["bro.exporters.instances"] != "abcdefghij" || cfg["bro.exporters.abcdefghij.type"] != "hec" || cfg["bro.analyzers.mqtt.enable"] != true {
+		t.Fatalf("configuration %v", cfg)
+	}
+	if _, ok := cfg["bro.exporters.abcdefghij.hec_token"]; ok {
+		t.Error("secret placeholder sent")
+	}
+	found := false
+	for _, o := range res2.FollowUp {
+		found = found || strings.Contains(o.Item, "hec_token")
+	}
+	if !found {
+		t.Errorf("token follow-up missing: %+v", res2.FollowUp)
+	}
+	recs, _ = migrate.ReadImports(dir)
+	if len(recs) != 1 || len(recs[0].Deferred) != 0 || recs[0].CompletedAt == nil {
+		t.Fatalf("records after completion %+v", recs)
+	}
+	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, complete); err == nil || !strings.Contains(err.Error(), "nothing to complete") {
+		t.Errorf("second completion: %v", err)
+	}
+	if _, err := migrate.BuildPlan(ctx, tgt.client, "tgt", dir, m, migrate.ImportOptions{Complete: true, NameSuffix: "x"}); err == nil {
+		t.Error("complete with name_suffix accepted")
 	}
 }

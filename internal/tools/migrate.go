@@ -17,7 +17,8 @@ import (
 )
 
 const migrateInstructions = `
-- Copying a sensor policy between Fleet Managers: fm_policy_copy exports the policy and everything it uses from one FM and previews the import into another; fm_policy_export and fm_policy_import do the two halves separately. Versions must match on major.minor. Secrets (exporter tokens, password settings, licensed feed URLs, connector credentials) are never copied: show the follow_up list so the user can enter them on the target. Sensor groups are not copied.`
+- Copying a sensor policy between Fleet Managers: fm_policy_copy exports the policy and everything it uses from one FM and previews the import into another; fm_policy_export and fm_policy_import do the two halves separately. Versions must match on major.minor. Secrets (exporter tokens, password settings, licensed feed URLs, connector credentials) are never copied: show the follow_up list so the user can enter them on the target. Sensor groups are not copied.
+- Exporters can only be migrated once the target FM has a sensor attached (FM lists no exporter types before that). The preview then asks, in plan.decisions, whether to continue without them: ask the user and never decide for them. A user who continues can add the exporters later, after attaching a sensor, with fm_policy_import, the same package and complete: true; fm_policy_packages shows imports still waiting for that.`
 
 type exportArgs struct {
 	target
@@ -37,11 +38,12 @@ type importOptions struct {
 	Name         string   `json:"name,omitempty" jsonschema:"name for the new sensor policy (default: the exported name)"`
 	NameSuffix   string   `json:"name_suffix,omitempty" jsonschema:"appended to the name of every object created, e.g. \" (copy)\", to avoid name clashes"`
 	Exclude      []string `json:"exclude,omitempty" jsonschema:"parts to leave out: bundle, suricata, yara, exporters, input, intel, resource, ca_bundles"`
+	Complete     bool     `json:"complete,omitempty" jsonschema:"finish an earlier import of this package into this Fleet Manager that left the exporters out: add them to the policy it created (needs a sensor attached to the target; name, name_suffix and exclude do not apply)"`
 	ConfirmToken string   `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this import's preview; when it matches, the import runs"`
 }
 
 func (a importOptions) options() migrate.ImportOptions {
-	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, Exclude: a.Exclude}
+	return migrate.ImportOptions{Name: a.Name, NameSuffix: a.NameSuffix, Exclude: a.Exclude, Complete: a.Complete}
 }
 
 func (d *Deps) packageDir(name string) (string, error) {
@@ -118,8 +120,12 @@ func registerMigrate(s *mcp.Server, d *Deps) {
 			if err != nil {
 				continue
 			}
-			rows = append(rows, map[string]any{"package": e.Name(), "source_fleet": m.Source.Fleet, "source_version": m.Source.Version,
-				"policy": m.Policy.Name, "exported_at": m.ExportedAt, "total_bytes": m.TotalBytes(), "omitted": len(m.Omitted)})
+			row := map[string]any{"package": e.Name(), "source_fleet": m.Source.Fleet, "source_version": m.Source.Version,
+				"policy": m.Policy.Name, "exported_at": m.ExportedAt, "total_bytes": m.TotalBytes(), "omitted": len(m.Omitted)}
+			if recs, err := migrate.ReadImports(filepath.Join(d.PackagesDir, e.Name())); err == nil && len(recs) > 0 {
+				row["imports"] = recs
+			}
+			rows = append(rows, row)
 		}
 		sort.Slice(rows, func(i, j int) bool {
 			return rows[i].(map[string]any)["package"].(string) < rows[j].(map[string]any)["package"].(string)
@@ -172,6 +178,9 @@ func registerMigrateWrite(s *mcp.Server, d *Deps) {
 		Annotations: &mcp.ToolAnnotations{Title: "Copy sensor policy", DestructiveHint: &f, OpenWorldHint: &t},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a copyArgs) (*mcp.CallToolResult, any, error) {
 		if a.Package == "" {
+			if a.Complete {
+				return nil, nil, errors.New("to finish an earlier copy, call fm_policy_import with complete: true and that copy's package (fm_policy_packages shows imports with deferred parts)")
+			}
 			if a.ConfirmToken != "" {
 				return nil, nil, errors.New("confirm_token needs the package from the preview")
 			}
@@ -213,7 +222,7 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 		return nil, nil, err
 	}
 	opts := a.options()
-	plan, err := migrate.BuildPlan(ctx, c.Client, c.Name, m, opts)
+	plan, err := migrate.BuildPlan(ctx, c.Client, c.Name, dir, m, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -228,8 +237,10 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 		if plan.Ready() {
 			out["confirm_token"] = token
 			out["next"] = fmt.Sprintf("Show the plan, warnings and follow_up items to the user. After they approve importing into %s, call %s again with the same arguments plus package %q and confirm_token.", c.Name, tool, pkg)
+		} else if len(plan.Blockers) == 0 {
+			out["next"] = "Ask the user each question in plan.decisions, in your own words, and wait for the answer. Then preview again with the arguments its resolve entry gives for that answer (for exporters, \"yes\" means adding exclude [\"exporters\"]). Do not choose for the user."
 		} else {
-			out["next"] = "Resolve the blockers (or use name_suffix or exclude where they apply) and preview again."
+			out["next"] = "Resolve the blockers (or use name_suffix or exclude where they apply) and preview again. If plan.decisions is not empty, ask the user those questions too."
 		}
 		r, err := jsonResult(out)
 		return r, nil, err

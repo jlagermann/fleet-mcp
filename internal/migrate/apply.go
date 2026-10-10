@@ -26,8 +26,8 @@ type Created struct {
 type Result struct {
 	PolicyID int64     `json:"policy_id,omitempty"`
 	Created  []Created `json:"created"`
-	// Uploaded counts file-manager uploads; Fleet Manager has no API to
-	// delete them, so a rollback leaves them behind unreferenced.
+	// Uploaded counts file-manager uploads. A rollback leaves them behind
+	// unreferenced (how Fleet Manager deletes them is not known yet).
 	Uploaded       int        `json:"uploaded_files"`
 	Verification   []string   `json:"verification,omitempty"`
 	RolledBack     bool       `json:"rolled_back,omitempty"`
@@ -50,17 +50,27 @@ type applier struct {
 // created, in reverse order, and reports that in the result.
 func Apply(ctx context.Context, api API, dir string, m *Manifest, plan *Plan, opts ImportOptions) (*Result, error) {
 	if !plan.Ready() {
-		return nil, errors.New("the plan has blockers; resolve them and preview again")
+		return nil, errors.New("the plan has blockers or open decisions; resolve them and preview again")
 	}
 	if err := VerifyFiles(dir, m); err != nil {
 		return nil, fmt.Errorf("package files: %w", err)
 	}
 	a := &applier{api: api, dir: dir, m: m, plan: plan, opts: opts, res: &Result{Created: []Created{}, FollowUp: plan.FollowUp}, uploaded: map[string]int64{}}
-	if err := a.run(ctx); err != nil {
-		a.rollback(ctx)
-		return a.res, err
+	if plan.completeInto > 0 {
+		if err := a.applyCompletion(ctx); err != nil {
+			return a.res, err
+		}
+		a.verifyConfiguration(ctx)
+	} else {
+		if err := a.run(ctx); err != nil {
+			a.rollback(ctx)
+			return a.res, err
+		}
+		a.verify(ctx)
 	}
-	a.verify(ctx)
+	if err := recordImport(dir, plan, a.res); err != nil {
+		a.res.Verification = append(a.res.Verification, "could not record the import in the package: "+err.Error())
+	}
 	return a.res, nil
 }
 

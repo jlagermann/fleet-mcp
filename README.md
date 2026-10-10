@@ -211,7 +211,8 @@ Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy`
 **Checks before anything is created:**
 
 - Fleet Manager versions must match on major.minor (29.2.x to 29.2.y is fine).
-- The target must know every setting (checked with its own validation endpoint) and offer every exporter type. Fleet Manager lists exporter types only once a sensor has registered, so on a new Fleet Manager either register a sensor first or exclude exporters.
+- The target must know every setting (checked with its own validation endpoint). Suricata settings it does not know are listed and left out.
+- Exporters need a sensor attached to the target: Fleet Manager offers no exporter types before that. The preview then asks whether to continue with everything else. If you continue, the import is recorded in the package, and once a sensor is attached, importing the same package again with `complete: true` adds the exporters to the policy that was created. `fm_policy_packages` shows imports still waiting for that.
 - Sensors play no part in an import: a policy can be imported, and assigned to a group, before any sensor exists. For information, the preview shows how many target sensors hold the licenses for the features the policy enables (Suricata, YARA, SmartPCAP, asset classification).
 - No created object may clash with an existing name (use `name_suffix`).
 
@@ -221,6 +222,10 @@ Sample prompts:
 
 ```text
 Copy the defaultPolicy sensor policy from prod to lab.
+```
+
+```text
+lab has a sensor now. Finish the defaultPolicy migration from prod by adding the exporters.
 ```
 
 ```text

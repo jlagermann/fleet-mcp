@@ -171,6 +171,9 @@ func Register(s *mcp.Server, d *Deps) {
 		registerHost(s, d)
 		if d.EnableWrites {
 			registerHostWrite(s, d)
+			if d.Fleets != nil {
+				registerSensorWrite(s, d)
+			}
 		}
 	}
 }

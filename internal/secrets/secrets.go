@@ -48,6 +48,7 @@ const (
 	RegistryPassword = "registry-password"
 	CommunityString  = "community-string"
 	MCPPassword      = "mcp-password"
+	SensorPassword   = "sensor-admin-password"
 )
 
 // Spec describes a known secret.
@@ -76,6 +77,7 @@ var Known = []Spec{
 	{Name: RegistryPassword, Scope: Global, Kind: Prompt, Description: "Corelight container registry password", UsedFor: "container installs"},
 	{Name: CommunityString, Scope: Host, Kind: Generated, Description: "pre-shared secret sensors use to connect to this Fleet Manager (messaging.community-string)", UsedFor: "sensor connections", Settable: true, Showable: true},
 	{Name: MCPPassword, Scope: Host, Kind: Generated, Description: "password of the local user fleet-mcp logs in as", UsedFor: "the MCP server's API access"},
+	{Name: SensorPassword, Scope: Global, Kind: Prompt, Description: "Corelight Sensor admin password; the diag-shell SSH user uses the same password", UsedFor: "moving sensors between Fleet Managers (SSH to the sensor as diag-shell)"},
 }
 
 // Lookup returns the Spec for name.

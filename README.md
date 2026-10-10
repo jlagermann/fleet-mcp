@@ -240,6 +240,23 @@ Export the defaultPolicy from prod, including snapshots of the connector-fed
 intel, then show me what importing it into lab would do, without the exporters.
 ```
 
+## Move a sensor to another Fleet Manager
+
+Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), so `fm_sensor_move` logs in to the sensor over SSH as `diag-shell` and runs:
+
+```sh
+corelight-client configuration update --fleet.community_string=<target's> --fleet.server=<target host>:1443 --fleet.server_sslname=''
+```
+
+- The sensor address comes from the source Fleet Manager; the target's community string from the secret store (stored by fleet-mcp's install, or `fleet-mcp secret set community-string -host <fleet>`).
+- `diag-shell` uses the sensor's `admin` password: store it once with `fleet-mcp secret set sensor-admin-password`.
+- On first contact the preview shows the sensor's SSH host key fingerprint; it is pinned when you confirm, and a changed key is refused.
+- The sensor keeps its configuration: it appears on the target in UNASSIGNED and changes only when you put it in a sensor group with a policy. Its entry on the source goes offline.
+
+```text
+Move Lab-Sensor6 from prod to lab.
+```
+
 ## Configuration
 
 Settings come from environment variables.
@@ -301,6 +318,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_policy_packages` | List exported packages |
 | `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
+| `fm_sensor_move` | Move a sensor to another Fleet Manager over SSH as diag-shell (writes enabled; preview, then confirm) |
 
 ### Changes need two calls
 

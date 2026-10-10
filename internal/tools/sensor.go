@@ -135,12 +135,24 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			if csErr != nil {
 				blockers = append(blockers, fmt.Sprintf("%s's community string is not stored; the user runs in a terminal: fleet-mcp secret set %s -host %s", tgt.Name, secrets.CommunityString, tgt.Name))
 			}
+			// A sensor new to the target lands in UNASSIGNED with no
+			// policy; one that was there before rejoins its old group.
+			toGroup, toPolicy, after := any("UNASSIGNED"), any("none"),
+				fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name)
+			if prev, err := d.findSensor(ctx, tgt, uid); err == nil {
+				toGroup, toPolicy = prev["group.name"], prev["policy.name"]
+				if toPolicy == nil || toPolicy == "" {
+					toPolicy = "none"
+				}
+				after = fmt.Sprintf("%s was on %s before and rejoins group %v there (policy %v): it takes that policy's configuration if the group has one. It goes offline on %s.", name, tgt.Name, toGroup, toPolicy, src.Name)
+			}
 			out := map[string]any{
-				"preview": true, "sensor": name, "uid": uid, "from": src.Name, "to": tgt.Name,
-				"group": sensor["group.name"], "policy": sensor["policy.name"], "health": sensor["health.status"],
+				"preview": true, "sensor": name, "uid": uid, "health": sensor["health.status"],
+				"from":            map[string]any{"fleet": src.Name, "group": sensor["group.name"], "policy": sensor["policy.name"]},
+				"to":              map[string]any{"fleet": tgt.Name, "group": toGroup, "policy": toPolicy},
 				"ssh":             map[string]any{"host": sshHost, "user": sensorssh.User, "host_key": hk},
 				"sensor_settings": map[string]any{"fleet.server": addr, "fleet.community_string": "(" + tgt.Name + "'s community string)", "fleet.server_sslname": ""},
-				"after":           fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name),
+				"after":           after,
 				"ready":           len(blockers) == 0,
 			}
 			if len(blockers) > 0 {

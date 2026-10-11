@@ -100,6 +100,7 @@ func usage() {
   fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
   fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
   fleet-mcp secret import <name> <file>   import a certificate or license file
+  fleet-mcp secret set-setting <name>    store a write-only policy setting (proxy password, S3 key, exporter token) for fm_policy_create
   fleet-mcp host checklist <host>         everything to provide before an install, with status
   fleet-mcp host check <host>             check a host's readiness for Fleet Manager
   fleet-mcp host install <host> [flags]   preview an installation; add -execute to run it
@@ -353,6 +354,24 @@ func secretCmd(args []string) error {
 		return errors.New("no secret store directory")
 	}
 	switch args[0] {
+	case "set-setting":
+		// A write-only policy setting for fm_policy_create: proxy password,
+		// S3 secret key, or exporter:<exporter name>:<field>.
+		if len(args) != 2 {
+			return errors.New("usage: fleet-mcp secret set-setting <name>   (e.g. network.management.proxy.password, or \"exporter:<exporter name>:hec_token\")")
+		}
+		v, err := readSecret(secrets.Spec{Name: args[1], Description: "Value for the sensor policy setting " + args[1] + " (used by fm_policy_create, then deleted)"})
+		if err != nil {
+			return err
+		}
+		if v == "" {
+			return errors.New("nothing stored: the value is empty")
+		}
+		if err := e.secrets.SetSetting(args[1], v); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "stored "+args[1])
+		return nil
 	case "list":
 		h := ""
 		if len(args) > 1 {

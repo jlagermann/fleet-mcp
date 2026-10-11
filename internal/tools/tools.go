@@ -76,7 +76,7 @@ func (d *Deps) maxBytes(requested int) int {
 
 // Instructions returns the text sent to MCP clients at initialization.
 func Instructions(writes bool) string {
-	s := instructions + migrateInstructions + hostInstructions
+	s := instructions + migrateInstructions + newPolicyInstructions + hostInstructions
 	if writes {
 		return s + writeInstructions
 	}
@@ -157,8 +157,12 @@ func Register(s *mcp.Server, d *Deps) {
 		registerFleets(s, d)
 		registerRead(s, d)
 		registerGeneric(s, d)
+		registerNewPolicy(s, d)
 		if d.EnableWrites {
 			registerWrite(s, d)
+			if d.Secrets != nil {
+				registerNewPolicyWrite(s, d)
+			}
 		}
 		if d.PackagesDir != "" {
 			registerMigrate(s, d)

@@ -10,18 +10,18 @@ AI agents use three different kinds of help. fleet-mcp provides tools and instru
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **28 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **30 tools** |
 | **Skill** | A packaged set of instructions (a `SKILL.md`, sometimes with scripts) that the agent loads when a task matches. A skill adds no abilities; it guides how the agent uses the tools it has, for example a step-by-step migration playbook or site conventions. | the agent, by reading it | **none** (you can write your own on top of these tools) |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects, such as "show the install checklist first" or "get the user's approval after a preview". They work like a small skill that is always loaded. | the agent, by reading it | built in |
 
-The 28 tools:
+The 30 tools:
 
 | Group | Count | Tools |
 |---|---|---|
 | Install and secrets (always available) | 4 | `fm_install_checklist`, `fm_host_check`, `fm_secrets_status`, `fm_secret_import_file` |
-| Fleet Manager reads | 15 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe` |
+| Fleet Manager reads | 16 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
-| Changes (only with writes enabled; preview, then confirm) | 7 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key` |
+| Changes (only with writes enabled; preview, then confirm) | 8 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -225,6 +225,32 @@ Which Fleet Managers can you reach, and what version is each running?
 Compare the sensor policies on prod and lab.
 ```
 
+## Create a sensor policy from scratch
+
+`fm_policy_create` builds a new sensor policy from a deployment profile and your answers, instead of Fleet Manager's policy wizard. The agent interviews you one topic at a time, previews the whole policy, and creates it after your approval.
+
+**Profiles.** `north-south` (border or egress) and `east-west` (internal) start from the sensor docs' deployment recommendations, which cover the packages that existed when they were written. For packages added since, fleet-mcp makes its own call (for example, malware C2 detectors are north-south because their traffic crosses the border; LDAP and SSDP analyzers are east-west). `fm_policy_profiles` lists every package with both recommendations, the reason and its source. ICS/OT protocol analyzers and environment-specific packages (shunting, Geneve, Netskope, log filters) are never enabled by a profile, only on request. You can add or remove any package.
+
+**What the interview covers:**
+
+- Name and description; the profile; packages to add or remove; a custom package bundle and which of its packages to enable.
+- Remote access: SSH and HTTPS are **on by default** and shown in the preview; allowed networks optional.
+- Machine learning and anomaly detection: **on by default** and shown in the preview. They need at least 32 GB RAM and 8 CPUs on virtual and software sensors; a sensor below that gets an automatic exception. Anomaly detection trains for 31 days before it alerts.
+- Network: keep or replace the local network blocks, traffic exclusion filter, NTP servers, diagnostic syslog, and a proxy if the sensors need one.
+- Exports: batch export of Zeek log archives (SFTP or S3) and streaming exporters (any type the Fleet Manager offers; unset fields take their defaults, as in the web interface).
+- Detection and enrichment: Suricata policy, YARA ruleset, input and intel collections on the target.
+- Performance monitoring (metrics through Zeek logs, syslog or Graphite; optionally the Network Performance Monitoring package) and automatic updates (through Fleet Manager, and which kinds to apply).
+
+Anything not asked about stays at the sensor default, and the preview lists those defaults. Other advanced settings are set only when you ask for them.
+
+**Secrets** (proxy password, S3 secret key, exporter tokens) are never typed in the chat: you store each at a hidden prompt, for example `fleet-mcp secret set-setting "exporter:Splunk:hec_token"`. The preview says which are needed; they are deleted from the store once the policy holds them.
+
+The preview is validated by the target Fleet Manager itself before anything is created. If linking the Suricata policy, YARA ruleset, collections or bundle fails, the new policy is deleted again.
+
+```text
+Create a new north-south sensor policy called "Edge" on lab.
+```
+
 ## Copy a sensor policy to another Fleet Manager
 
 Fleet Manager has no export feature, so fleet-mcp provides one. `fm_policy_copy` copies a sensor policy and everything it uses from one Fleet Manager to another; `fm_policy_export` and `fm_policy_import` do the two halves separately, through a package directory in `~/.local/share/fleet-mcp/packages`.
@@ -344,6 +370,8 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_graphql_mutate` | Run a GraphQL mutation (writes enabled) |
 | `fm_policy_export` | Export a sensor policy and everything it uses to a local package |
 | `fm_policy_packages` | List exported packages |
+| `fm_policy_profiles` | The north-south and east-west package recommendations `fm_policy_create` starts from |
+| `fm_policy_create` | Create a sensor policy from scratch (writes enabled; preview, then confirm) |
 | `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
 | `fm_sensor_move` | Move a sensor to another Fleet Manager over SSH as diag-shell (writes enabled; preview, then confirm) |
@@ -351,7 +379,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 
@@ -378,6 +406,7 @@ fleet-mcp host checklist <host>             # what to provide before an install,
 fleet-mcp host check <host>                 # readiness check
 fleet-mcp host install <host> [-execute]    # preview an install; -execute runs it
 fleet-mcp secret list [host]                # stored secrets (never values)
+fleet-mcp secret set-setting <name>         # hidden prompt: proxy password, S3 secret key or "exporter:<name>:<field>" for fm_policy_create
 fleet-mcp secret set repo-token             # hidden prompt
 fleet-mcp secret import identity-cert.pem <path>
 fleet-mcp secret show community-string -host <host> [-copy]

@@ -209,20 +209,29 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 	})
 }
 
-// waitForSensor polls the target's catalog until the sensor appears.
+// waitForSensor polls until the sensor has connected to the target. Fleet
+// Manager never connects to sensors: each sensor opens the connection and
+// Fleet Manager's sensor proxy rides on it, so a proxied call that
+// succeeds proves the sensor's connection is up. A target that knew the
+// sensor before still lists it while it is offline, so being listed alone
+// proves nothing.
 func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, limit time.Duration) map[string]any {
-	defer metrics.Step(ctx, "wait for the sensor to appear on %s", c.Name)()
+	defer metrics.Step(ctx, "wait for the sensor to connect to %s", c.Name)()
 	deadline := time.Now().Add(limit)
 	for {
 		if cat, err := d.catalog(ctx, c); err == nil {
 			for _, s := range cat {
-				if fmt.Sprint(s["uid"]) == uid {
-					return map[string]any{"present": true, "group": s["group.name"], "health": s["health.status"], "connection": s["connection.status"]}
+				if fmt.Sprint(s["uid"]) != uid {
+					continue
+				}
+				var cfg map[string]any
+				if c.Client.GetJSON(ctx, "/fleet/v1/sensor/instance/"+uid+"/api/configuration", nil, &cfg) == nil {
+					return map[string]any{"connected": true, "group": s["group.name"], "policy": s["policy.name"], "fleet.server": cfg["fleet.server"]}
 				}
 			}
 		}
 		if time.Now().After(deadline) {
-			return map[string]any{"present": false, "note": fmt.Sprintf("not on %s after %s; check fm_sensors_list again shortly", c.Name, limit)}
+			return map[string]any{"connected": false, "note": fmt.Sprintf("not connected to %s after %s; check fm_sensors_list again shortly", c.Name, limit)}
 		}
 		select {
 		case <-ctx.Done():

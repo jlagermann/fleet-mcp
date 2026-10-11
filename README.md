@@ -2,7 +2,28 @@
 
 An [MCP](https://modelcontextprotocol.io) server for installing, configuring and managing Corelight Fleet Manager.
 
-> **Status:** early development. The server is **read-only unless writes are enabled**. Installation is tested on Ubuntu 22.04 with Fleet Manager 29.2.2; the API write tools are tested only against a fake Fleet Manager so far.
+> **Status:** early development. The server is **read-only unless writes are enabled**. Tested with Fleet Manager 29.2.2: installs on Ubuntu, policy copies between Fleet Managers, and sensor moves.
+
+## Tools, skills and instructions
+
+AI agents use three different kinds of help. fleet-mcp provides tools and instructions; it does not include skills.
+
+| | What it is | Who runs it | In fleet-mcp |
+|---|---|---|---|
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **28 tools** |
+| **Skill** | A packaged set of instructions (a `SKILL.md`, sometimes with scripts) that the agent loads when a task matches. A skill adds no abilities; it guides how the agent uses the tools it has, for example a step-by-step migration playbook or site conventions. | the agent, by reading it | **none** (you can write your own on top of these tools) |
+| **Server instructions** | Short guidance an MCP server sends when the agent connects, such as "show the install checklist first" or "get the user's approval after a preview". They work like a small skill that is always loaded. | the agent, by reading it | built in |
+
+The 28 tools:
+
+| Group | Count | Tools |
+|---|---|---|
+| Install and secrets (always available) | 4 | `fm_install_checklist`, `fm_host_check`, `fm_secrets_status`, `fm_secret_import_file` |
+| Fleet Manager reads | 15 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe` |
+| Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
+| Changes (only with writes enabled; preview, then confirm) | 7 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key` |
+
+Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
 ## Scope
 

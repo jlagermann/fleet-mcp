@@ -10,6 +10,9 @@ const (
 	NorthSouth = "north-south"
 	EastWest   = "east-west"
 	NoProfile  = "none"
+
+	// ICSOT is the collection of ICS/OT protocol analyzers.
+	ICSOT = "ICS/OT"
 )
 
 // Where a recommendation comes from.

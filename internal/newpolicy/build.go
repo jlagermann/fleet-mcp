@@ -15,6 +15,7 @@ type Spec struct {
 	Profile        string   `json:"profile" jsonschema:"starting set of Zeek packages: north-south (border or egress), east-west (internal) or none; see fm_policy_profiles"`
 	AddPackages    []string `json:"add_packages,omitempty" jsonschema:"packages to enable in addition to the profile (key, short name or display name)"`
 	RemovePackages []string `json:"remove_packages,omitempty" jsonschema:"profile packages to leave off"`
+	ICSOT          bool     `json:"ics_ot,omitempty" jsonschema:"enable every ICS/OT protocol analyzer at once; remove_packages can still leave single ones off"`
 
 	// Access: SSH and HTTPS are on unless set to false.
 	SSH           *bool  `json:"ssh,omitempty" jsonschema:"remote access over SSH (default true)"`
@@ -474,6 +475,14 @@ func (b *Built) packages(s Spec, props map[string]any, set func(string, string, 
 	default:
 		b.Errors = append(b.Errors, fmt.Sprintf("profile must be north-south, east-west or none, not %q", s.Profile))
 		chosen = map[string]Package{}
+	}
+	if s.ICSOT {
+		for _, p := range Packages {
+			if p.Collection == ICSOT {
+				p.Source = "asked for (all ICS/OT)"
+				chosen[p.Key] = p
+			}
+		}
 	}
 	for _, ref := range s.AddPackages {
 		p, ok := Lookup(ref)

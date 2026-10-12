@@ -77,6 +77,13 @@ func TestAddRemoveAndUnavailable(t *testing.T) {
 	if !strings.Contains(strings.Join(b.Unavailable, ","), "JA3") {
 		t.Errorf("unavailable %v", b.Unavailable)
 	}
+	b = Build(Spec{Name: "x", Profile: NoProfile, ICSOT: true, RemovePackages: []string{"bacnet"}}, p, nil)
+	if b.Configuration["bro.pkgs.corelight.zeek_plugin_dnp3.loaded"] != true || b.Configuration["bro.pkgs.corelight.roc_plus.loaded"] != true {
+		t.Error("ics_ot did not enable the ICS/OT analyzers")
+	}
+	if _, on := b.Configuration["bro.pkgs.corelight.zeek_plugin_bacnet.loaded"]; on {
+		t.Error("removed ICS/OT package enabled")
+	}
 	b = Build(Spec{Name: "x", Profile: "sideways", AddPackages: []string{"nope"}}, p, nil)
 	if len(b.Errors) != 2 {
 		t.Errorf("errors %v", b.Errors)

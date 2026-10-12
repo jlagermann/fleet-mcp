@@ -96,6 +96,7 @@ const instructions = `fleet-mcp installs and manages Corelight Fleet Managers (F
 - One server can reach several Fleet Managers. Call fm_fleets to list them; every FM tool takes an optional fleet argument (the name from fm_fleets) and otherwise uses the default. Always say which Fleet Manager a result came from, and name it in every change you propose. Fleet Managers marked read_only refuse changes.
 - Use fm_info to see an FM's version, the logged-in user and whether the API schemas are available.
 - Named tools (fm_sensors_list, fm_groups_list, fm_policies_list, ...) return compact summaries. Use the matching *_get tool or fm_api_get for full records.
+- Troubleshooting a sensor: start with fm_sensor_diagnose (one call, from Fleet Manager), then fm_sensor_shell for logs and state on the sensor itself (read-only fixed checks as diag-shell, which has no root). Compare with healthy sensors on the same policy before concluding a cause.
 - fm_api_get reaches any REST GET endpoint; fm_graphql_query runs GraphQL queries (mutations are rejected). Use fm_api_describe to find endpoints, parameters and GraphQL fields.
 - Large results: narrow them with select (a JSON Pointer such as "/list/0"; keys may contain dots, e.g. "/health.status"), fields (pointers kept per item), offset/limit, and max_bytes.
 - Secrets (passwords, tokens, keys, license codes in feed URLs) are replaced with "[REDACTED]" before results are returned.`
@@ -157,6 +158,7 @@ func Register(s *mcp.Server, d *Deps) {
 	if d.Fleets != nil {
 		registerFleets(s, d)
 		registerRead(s, d)
+		registerDiagnose(s, d)
 		registerGeneric(s, d)
 		registerNewPolicy(s, d)
 		if d.EnableWrites {
@@ -174,6 +176,9 @@ func Register(s *mcp.Server, d *Deps) {
 	}
 	if d.Secrets != nil {
 		registerHost(s, d)
+		if d.Fleets != nil {
+			registerSensorShell(s, d)
+		}
 		if d.EnableWrites {
 			registerHostWrite(s, d)
 			if d.Fleets != nil {

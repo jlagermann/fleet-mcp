@@ -29,9 +29,11 @@ func TestSensorDiagnose(t *testing.T) {
 			svc("zeek", "Running", ""),
 		}}
 	other := healthy("Lab-Sensor1", "1a-1b-1c-1d-1e-1f-20-21")
+	stale := map[string]any{"uid": "3a-3b-3c-3d-3e-3f-40-41", "name": "Lab-Sensor4", "health.status": "warning", "fleet.connected": true, "policy.id": 18.0,
+		"services.status": []any{svc("ngs_status", "Warning", "service: sensor-core - Failed: Service not started")}}
 	offline := map[string]any{"uid": "00000000-0000-4000-8000-000000000001", "name": "Lab-Soft", "health.status": "unknown", "fleet.connected": false,
 		"ping.last": "2026-09-25T11:50:54.812537692-05:00"}
-	fm.Route("GET /fleet/v1/sensor/catalog", map[string]any{"list": []any{broken, other, healthy("Lab-Sensor2", "2a-2b-2c-2d-2e-2f-30-31"), offline}})
+	fm.Route("GET /fleet/v1/sensor/catalog", map[string]any{"list": []any{broken, other, healthy("Lab-Sensor2", "2a-2b-2c-2d-2e-2f-30-31"), offline, stale}})
 	fm.Route("GET /fleet/v1/sensor-update/status", []any{map[string]any{"uid": "0a-0b-0c-0d-0e-0f-10-11", "message": "Update completed", "original_os": ":29.2.1-a2", "update_status": "idle"}})
 	cs := session(t, fm)
 
@@ -61,5 +63,10 @@ func TestSensorDiagnose(t *testing.T) {
 	out, _ = call(t, cs, "fm_sensor_diagnose", map[string]any{"sensor": "Lab-Sensor1"})
 	if !strings.Contains(out, "reports nothing wrong") {
 		t.Errorf("healthy sensor: %s", out)
+	}
+
+	out, _ = call(t, cs, "fm_sensor_diagnose", map[string]any{"sensor": "Lab-Sensor4"})
+	if !strings.Contains(out, "services not OK as of the last check-in: ngs_status (Warning)") {
+		t.Errorf("warning-only sensor: %s", out)
 	}
 }

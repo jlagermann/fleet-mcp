@@ -257,6 +257,13 @@ func diagnose(s map[string]any, cat []map[string]any, upd map[string]any, now ti
 		}
 	}
 
+	if len(dg.Findings) == 0 && len(dg.Problems) > 0 {
+		var names []string
+		for _, pb := range dg.Problems {
+			names = append(names, fmt.Sprintf("%s (%s)", pb.Name, pb.Status))
+		}
+		finding("services not OK as of the last check-in: %s; see service_problems for which parts failed. Right after a reboot or deploy this can be stale: compare with fm_sensor_shell status", strings.Join(names, ", "))
+	}
 	if len(dg.Findings) == 0 {
 		if strings.EqualFold(fmt.Sprint(dg.Health), "healthy") {
 			finding("Fleet Manager reports nothing wrong with this sensor")

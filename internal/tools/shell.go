@@ -105,7 +105,8 @@ func shellCommand(a shellArgs) (string, error) {
 	var cmd string
 	switch a.Check {
 	case "status":
-		cmd = ctl + " sensor status --no-color"
+		// sudoers allows exactly "sensor status", with no arguments.
+		cmd = ctl + " sensor status"
 	case "version":
 		cmd = ctl + " version"
 	case "upgrade":

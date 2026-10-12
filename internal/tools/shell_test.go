@@ -26,7 +26,12 @@ func TestShellCommand(t *testing.T) {
 			t.Errorf("%s: a changing command: %s", name, cmd)
 		}
 	}
-	cmd, _ := shellCommand(ok["service_logs"])
+	// sudoers allows "corelightctl sensor status" only without arguments.
+	cmd, _ := shellCommand(ok["status"])
+	if !strings.HasSuffix(cmd, "/usr/bin/corelightctl sensor status 2>&1") {
+		t.Errorf("status: %s", cmd)
+	}
+	cmd, _ = shellCommand(ok["service_logs"])
 	if !strings.Contains(cmd, "-l 2000") || !strings.Contains(cmd, "-s 'sensor-operator' -c 'manager'") {
 		t.Errorf("service_logs: %s", cmd)
 	}

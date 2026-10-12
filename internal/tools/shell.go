@@ -44,6 +44,7 @@ var (
 var shellChecks = map[string]string{
 	"status":        "corelightctl sensor status: platform, OS and NGS versions, license, every service and exporter with its state, and errors",
 	"version":       "corelightctl version (the NGS version installed for the next deploy)",
+	"deploy":        "the latest NGS deploy run (the sensor reruns it at every boot and daily): when it started, whether it succeeded, failed or is still running, and its steps; use it to follow a deploy after fm_sensor_action reboot",
 	"upgrade":       "the NGS deploy/upgrade history from /system-logs/corelightctl.log: pre-flight checks, bootstrap, deploy success or failure, with the repeated wait messages removed (file: a rotated copy such as corelightctl.log-20261011)",
 	"service_logs":  "corelightctl sensor logs for a service (service, optional container), e.g. sensor-operator, sensor-core, kafka",
 	"exporter_logs": "corelightctl sensor logs for an exporter (exporter: its id, e.g. exporter-635n2t7kxj)",
@@ -58,7 +59,7 @@ type shellArgs struct {
 	target
 	Sensor     string `json:"sensor" jsonschema:"sensor uid or exact name"`
 	SensorHost string `json:"sensor_host,omitempty" jsonschema:"SSH address of the sensor if Fleet Manager does not report its management address"`
-	Check      string `json:"check" jsonschema:"one of: status, version, upgrade, service_logs, exporter_logs, pod_logs, system_logs, system_log, disk, datastore"`
+	Check      string `json:"check" jsonschema:"one of: status, version, deploy, upgrade, service_logs, exporter_logs, pod_logs, system_logs, system_log, disk, datastore"`
 	Service    string `json:"service,omitempty" jsonschema:"service_logs: the service name from status (e.g. sensor-operator)"`
 	Exporter   string `json:"exporter,omitempty" jsonschema:"exporter_logs: the exporter id from status (e.g. exporter-635n2t7kxj)"`
 	Pod        string `json:"pod,omitempty" jsonschema:"pod_logs: the pod name"`
@@ -76,6 +77,9 @@ func shellCommand(a shellArgs) (string, error) {
 	n := a.Lines
 	if n <= 0 {
 		n = 200
+		if a.Check == "deploy" {
+			n = 60
+		}
 	}
 	if n > 2000 {
 		n = 2000
@@ -107,6 +111,18 @@ func shellCommand(a shellArgs) (string, error) {
 	case "status":
 		// sudoers allows exactly "sensor status", with no arguments.
 		cmd = ctl + " sensor status"
+	case "deploy":
+		// A deploy run starts with a debug line naming the command; every
+		// line of that run carries the same id.
+		f := "/system-logs/corelightctl.log"
+		run := `grep -F "$id" ` + f
+		cmd = `id=$(grep -F 'running command \"sensor deploy\"' ` + f + ` | tail -n 1 | grep -o 'id="[A-Za-z0-9]*"'); ` +
+			`if [ -z "$id" ]; then echo 'no deploy run in corelightctl.log (it may have rotated: use check upgrade with file)'; else ` +
+			`printf 'run %s started: ' "$id"; ` + run + ` | head -n 1 | cut -c1-15; ` +
+			`if ` + run + ` | grep -q -F 'sensor deploy success'; then echo 'result: deploy succeeded'; ` +
+			`elif ` + run + ` | grep -q -E 'level="(error|fatal)"'; then echo 'result: errors logged (the deploy failed or is retrying)'; ` +
+			`else echo 'result: still running'; fi; ` +
+			run + ` | grep -E 'level="(info|warning|error|fatal)"' | grep -v -F` + quoteEach(upgradeNoise) + filter + tail + `; fi`
 	case "version":
 		cmd = ctl + " version"
 	case "upgrade":
@@ -175,7 +191,7 @@ func quoteEach(ss []string) string {
 func registerSensorShell(s *mcp.Server, d *Deps) {
 	f := false
 	var desc []string
-	for _, k := range []string{"status", "version", "upgrade", "service_logs", "exporter_logs", "pod_logs", "system_logs", "system_log", "disk", "datastore"} {
+	for _, k := range []string{"status", "version", "deploy", "upgrade", "service_logs", "exporter_logs", "pod_logs", "system_logs", "system_log", "disk", "datastore"} {
 		desc = append(desc, k+": "+shellChecks[k])
 	}
 	mcp.AddTool(s, &mcp.Tool{
@@ -230,6 +246,12 @@ func registerSensorShell(s *mcp.Server, d *Deps) {
 		var notes []string
 		if login.Auth.Password != "" && strings.Contains(out, "[REDACTED]") {
 			notes = append(notes, "the stored sensor password was masked in the output; if it is a common word, ordinary text was masked too")
+		}
+		// corelightctl sensor status exits 1 when a service has failed;
+		// its report is still the result.
+		if err != nil && a.Check == "status" && strings.Contains(out, "Corelight System Status") {
+			res["exit"] = "corelightctl reported a failed service or error (exit status 1)"
+			err = nil
 		}
 		if err != nil {
 			res["error"] = err.Error()

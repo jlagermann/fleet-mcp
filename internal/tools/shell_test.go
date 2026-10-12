@@ -15,6 +15,7 @@ func TestShellCommand(t *testing.T) {
 		"pod_logs":      {Check: "pod_logs", Pod: "sensor-core-5cddd55b4f-abcde"},
 		"system_log":    {Check: "system_log", File: "k3s.log", Pattern: "it's \"quoted\"; $(reboot)"},
 		"datastore":     {Check: "datastore"},
+		"deploy":        {Check: "deploy"},
 	}
 	for name, a := range ok {
 		cmd, err := shellCommand(a)
@@ -22,7 +23,7 @@ func TestShellCommand(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		if strings.Contains(cmd, " stop") || strings.Contains(cmd, "purge") || strings.Contains(cmd, "deploy ") {
+		if strings.Contains(cmd, " stop") || strings.Contains(cmd, "purge") || strings.Contains(cmd, "corelightctl sensor deploy") {
 			t.Errorf("%s: a changing command: %s", name, cmd)
 		}
 	}
@@ -30,6 +31,10 @@ func TestShellCommand(t *testing.T) {
 	cmd, _ := shellCommand(ok["status"])
 	if !strings.HasSuffix(cmd, "/usr/bin/corelightctl sensor status 2>&1") {
 		t.Errorf("status: %s", cmd)
+	}
+	cmd, _ = shellCommand(ok["deploy"])
+	if !strings.Contains(cmd, `running command \"sensor deploy\"`) || !strings.Contains(cmd, "tail -n 60") || !strings.Contains(cmd, "sensor deploy success") {
+		t.Errorf("deploy: %s", cmd)
 	}
 	cmd, _ = shellCommand(ok["service_logs"])
 	if !strings.Contains(cmd, "-l 2000") || !strings.Contains(cmd, "-s 'sensor-operator' -c 'manager'") {

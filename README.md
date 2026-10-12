@@ -10,11 +10,11 @@ AI agents use three different kinds of help. fleet-mcp provides tools and instru
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **32 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **33 tools** |
 | **Skill** | A packaged set of instructions (a `SKILL.md`, sometimes with scripts) that the agent loads when a task matches. A skill adds no abilities; it guides how the agent uses the tools it has, for example a step-by-step migration playbook or site conventions. | the agent, by reading it | **none** (you can write your own on top of these tools) |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects, such as "show the install checklist first" or "get the user's approval after a preview". They work like a small skill that is always loaded. | the agent, by reading it | built in |
 
-The 32 tools:
+The 33 tools:
 
 | Group | Count | Tools |
 |---|---|---|
@@ -22,7 +22,7 @@ The 32 tools:
 | Fleet Manager reads | 17 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_sensor_diagnose`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
-| Changes (only with writes enabled; preview, then confirm) | 8 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create` |
+| Changes (only with writes enabled; preview, then confirm) | 9 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -316,7 +316,7 @@ Move Lab-Sensor6 from prod to lab.
 
 ## Diagnose an unhealthy sensor
 
-Two read-only tools, used in this order:
+Two read-only tools, used in this order, and one that acts on the sensor:
 
 1. **`fm_sensor_diagnose`** answers from Fleet Manager in one call (two API requests for the whole fleet). Without a sensor it covers every sensor that is not healthy or not connected. For each: the services that are not running and their messages, the version the sensor reports versus the NGS (container platform) version it actually runs, the last software update, config apply errors and failed fields, exceptions, ended licenses and failed metrics, and whether the same service fails on the other sensors of the policy. It ends with findings and next steps.
 2. **`fm_sensor_shell`** looks at the sensor itself, for what Fleet Manager cannot show. fleet-mcp logs in over SSH as `diag-shell` (its own key if installed, otherwise the `sensor-admin-password` secret) and runs one of a fixed set of checks with validated, quoted arguments; it never runs free-form commands and never changes the sensor. The first connection to a sensor shows its SSH host key fingerprint for you to approve; it is then pinned.
@@ -325,15 +325,26 @@ Two read-only tools, used in this order:
 |---|---|
 | `status` | `corelightctl sensor status`: OS and NGS versions, license, every service and exporter, errors |
 | `version` | `corelightctl version`: the NGS version installed for the next deploy |
+| `deploy` | The latest NGS deploy run (rerun at every boot and daily): when it started, whether it succeeded, failed or is still running, and its last steps; use it to follow a deploy after a reboot |
 | `upgrade` | Every NGS deploy attempt from `/system-logs/corelightctl.log`: pre-flight checks, bootstrap, success or failure (repeated wait messages removed; `file` reads a rotated copy) |
 | `service_logs`, `exporter_logs`, `pod_logs` | `corelightctl sensor logs` for a service (and container) or exporter; `kubectl logs` for a pod |
 | `system_logs`, `system_log` | The host logs in `/system-logs` (k3s, containerd, ansible, sensor API and others), and the end of one of them |
 | `disk` | `df -h` |
 | `datastore` | Kubernetes datastore latency (k3s "Slow SQL" warnings): tens of seconds means slow storage, which makes upgrade jobs time out |
 
-`pattern` keeps only lines containing a text and `lines` sets how many (default 200, at most 2000).
+`pattern` keeps only lines containing a text and `lines` sets how many (default 200, 60 for `deploy`, at most 2000).
 
-What `diag-shell` is: an unprivileged bash inside a firejail sandbox. It can read `/system-logs`, and through `sudo` run `corelightctl sensor status`, `version`, `sensor logs`, `images`, `datastore` and `certificates`, and `kubectl logs`. It cannot list pods, read `/proc`, or run `ps`, `top`, `free` or `awk`, and it has no root; root on a sensor needs a Corelight Support escalation. `sudo` also allows `corelightctl sensor stop`; no check uses it.
+
+3. **`fm_sensor_action`** (only with writes enabled) changes the sensor, one fixed action at a time, through `corelight-client` as `diag-shell`:
+
+| Action | What it does |
+|---|---|
+| `reboot` | Reboots the sensor. At boot it reruns its NGS deploy, the first thing to try when an NGS upgrade failed on a job timeout (pre-flight or bootstrap) |
+| `apply_updates` | Applies pending software updates now, whatever the policy's update settings say. Refused when none are pending |
+| `revert_update` | Returns the sensor to its state before the last software update, then reboots it. Only when you ask for a revert |
+
+The preview shows the sensor's update state (`updates updating`, `updates list`) and, for `reboot` and `revert_update`, a `--dry-run` of the command (`corelight-client` words a dry run like a real one; nothing happens). It refuses while an update is in progress. After one confirmation the action runs and is written to the audit log; follow the deploy with `fm_sensor_shell` check `deploy`. Factory reset, shutdown, flush-data and `corelightctl sensor stop` are never offered. Fleet Manager's own update trigger only pushes policy; it never upgrades software.
+What `diag-shell` is: an unprivileged bash inside a firejail sandbox. It can read `/system-logs`, and through `sudo` run `corelightctl sensor status`, `version`, `sensor logs`, `images`, `datastore` and `certificates`, and `kubectl logs`. It cannot list pods or processes, or run `ps`, `top`, `free` or `awk`, and it has no root; root on a sensor needs a Corelight Support escalation. `sudo` also allows `corelightctl sensor stop`; no check uses it.
 
 ## Configuration
 
@@ -383,7 +394,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_sensors_list` | One summary row per sensor: health, connection, version, group, policy, config-apply state |
 | `fm_sensor_get` | Full detail for one sensor (by uid or name) |
 | `fm_sensor_diagnose` | Why sensors are unhealthy, from Fleet Manager in one call: failed services and messages, reported vs deployed version, last update, config errors, exceptions, compared with the other sensors on the policy, with findings and next steps |
-| `fm_sensor_shell` | Read-only checks on the sensor itself as diag-shell: status, version, upgrade history, service, exporter and pod logs, host logs, disk, datastore latency |
+| `fm_sensor_shell` | Read-only checks on the sensor itself as diag-shell: status, version, latest deploy run, upgrade history, service, exporter and pod logs, host logs, disk, datastore latency |
 | `fm_groups_list` | Sensor groups, their policy and members |
 | `fm_policies_list` / `fm_policy_get` | Sensor policies and their linked content |
 | `fm_suricata_policies_list` / `fm_suricata_policy_get` | Suricata policies, sources, modifier files and settings |
@@ -402,6 +413,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
 | `fm_sensor_move` | Move a sensor to another Fleet Manager over SSH as diag-shell (writes enabled; preview, then confirm) |
+| `fm_sensor_action` | Reboot a sensor, apply its pending updates, or revert its last update, over SSH as diag-shell (writes enabled; preview, then confirm) |
 | `fm_sensor_ssh_key` | Install fleet-mcp's SSH key on a sensor (its individual setting `security.user.admin.ssh_public_key`) so moves need no password (writes enabled; preview, then confirm) |
 
 ### Changes need two calls

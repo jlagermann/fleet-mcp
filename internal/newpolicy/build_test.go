@@ -95,7 +95,7 @@ func TestExportsSecretsAndUpdates(t *testing.T) {
 		ProxyServer: "http://proxy:3128", ProxyUsername: "u",
 		BatchExport: &BatchExport{Type: "s3", Bucket: "logs", AccessKey: "AKIA"},
 		Exporters:   []Exporter{{Type: "hec", Name: "Splunk", Settings: map[string]any{"hec_endpoint": "https://splunk:8088"}}},
-		Updates:     &Updates{ViaFleet: true, Apply: "service_restart"},
+		Updates:     &Updates{Offline: true, Apply: "selected", Types: []string{"no_impact", "service_restart"}},
 	}
 	b := Build(s, props(), hec)
 	if len(b.Errors) > 0 {
@@ -113,8 +113,18 @@ func TestExportsSecretsAndUpdates(t *testing.T) {
 		t.Error("required field with a default not filled")
 	}
 	c := b.Configuration
-	if c["updates.no_impact"] != true || c["updates.service_restart"] != true || c["updates.reboot"] != nil || c["fleet.updates.enable"] != true {
+	if c["updates.all"] != false || c["updates.no_impact"] != true || c["updates.service_restart"] != true || c["updates.reboot"] != false || c["fleet.updates.enable"] != true {
 		t.Errorf("updates %v", c)
+	}
+	// Fully disabled: Install software updates and all four types off.
+	c = Build(Spec{Name: "x", Profile: NoProfile, Updates: &Updates{Apply: "none"}}, props(), nil).Configuration
+	for _, k := range []string{"updates.all", "updates.no_impact", "updates.service_restart", "updates.visible_change", "updates.reboot"} {
+		if c[k] != false {
+			t.Errorf("%s = %v with apply none", k, c[k])
+		}
+	}
+	if _, set := c["fleet.updates.enable"]; set {
+		t.Error("offline updates set without being asked for")
 	}
 	// Missing a required exporter field, a secret given in the clear, an
 	// unknown exporter type.

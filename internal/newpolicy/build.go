@@ -3,6 +3,7 @@ package newpolicy
 import (
 	"crypto/rand"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -85,19 +86,26 @@ type Exporter struct {
 
 // Performance is device performance reporting.
 type Performance struct {
-	ZeekLogs       bool   `json:"zeek_logs,omitempty"` // metrics through Zeek log streams
-	Syslog         bool   `json:"syslog,omitempty"`
-	Graphite       string `json:"graphite_server,omitempty"`
-	Interval       string `json:"interval,omitempty"` // seconds
-	NetworkMonitor bool   `json:"network_performance_package,omitempty"`
+	ZeekLogs       bool   `json:"zeek_logs,omitempty" jsonschema:"Enable reporting through Zeek log streams (corelight_metrics_* and corelight_service_status)"`
+	Syslog         bool   `json:"syslog,omitempty" jsonschema:"Enable reporting through syslog"`
+	Graphite       string `json:"graphite_server,omitempty" jsonschema:"Graphite server to report to"`
+	Interval       string `json:"interval,omitempty" jsonschema:"reporting interval in seconds (default 3600)"`
+	NetworkMonitor bool   `json:"network_performance_package,omitempty" jsonschema:"Network Performance Monitoring package: detects and aggregates network performance anomalies (a Zeek package, not device metrics)"`
 }
 
-// Updates is automatic software updates.
+// Updates is automatic software updates. By default ("Install software
+// updates", updates.all) the sensor downloads every update from Corelight
+// Cloud Services itself and applies it.
 type Updates struct {
-	ViaFleet bool `json:"via_fleet_manager,omitempty"`
-	// Apply is none, no_impact, service_restart, reboot or all.
-	Apply string `json:"apply,omitempty"`
+	// Offline: updates are loaded into Fleet Manager and the sensor gets
+	// them from there (fleet.updates.enable).
+	Offline bool `json:"offline,omitempty" jsonschema:"offline updates: the update is loaded into Fleet Manager and the sensor gets it from there instead of from Corelight Cloud Services"`
+	// Apply is all (the default), none, or selected (only Types).
+	Apply string   `json:"apply,omitempty" jsonschema:"all (Install software updates, the default), none (fully disabled: Install software updates and all four update types off), or selected (only the types listed)"`
+	Types []string `json:"types,omitempty" jsonschema:"with apply selected: no_impact, service_restart, visible_change, reboot"`
 }
+
+var updateTypes = []string{"no_impact", "service_restart", "visible_change", "reboot"}
 
 // Item is one line of the preview.
 type Item struct {
@@ -235,13 +243,13 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 	// Performance monitoring.
 	if p := s.Performance; p != nil {
 		if p.ZeekLogs {
-			set("performance", "metrics.bro.enable", true, "device metrics and service status in Zeek logs")
+			set("performance", "metrics.bro.enable", true, "Enable reporting through Zeek log streams: corelight_metrics_* and corelight_service_status logs")
 		}
 		if p.Syslog {
-			set("performance", "metrics.syslog.enable", true, "device metrics over syslog")
+			set("performance", "metrics.syslog.enable", true, "Enable reporting through syslog")
 		}
 		if p.Graphite != "" {
-			set("performance", "metrics.graphite.enable", true, "")
+			set("performance", "metrics.graphite.enable", true, "Enable reporting to a Graphite server")
 			set("performance", "metrics.graphite.server", p.Graphite, "")
 		}
 		if p.Interval != "" {
@@ -256,7 +264,7 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 			}
 		}
 		if p.NetworkMonitor {
-			set("performance", "bro.pkgs.corelight.net_perf.loaded", true, "Network Performance Monitoring package")
+			set("performance", "bro.pkgs.corelight.net_perf.loaded", true, "Network Performance Monitoring package: detects and aggregates network performance anomalies")
 		}
 	} else {
 		b.Defaults = append(b.Defaults, "performance monitoring (off)")
@@ -264,32 +272,36 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 
 	// Updates.
 	if u := s.Updates; u != nil {
-		set("updates", "fleet.updates.enable", u.ViaFleet, "use Fleet Manager as the update server")
-		levels := []string{"no_impact", "service_restart", "visible_change", "reboot"}
-		apply := u.Apply
-		if apply == "" {
-			apply = "none"
+		if u.Offline {
+			set("updates", "fleet.updates.enable", true, "offline updates: loaded into Fleet Manager, the sensor gets them from there")
+		} else {
+			b.Defaults = append(b.Defaults, "updates source: the sensor downloads updates from Corelight Cloud Services itself")
 		}
-		switch apply {
+		switch u.Apply {
+		case "", "all":
+			set("updates", "updates.all", true, "Install software updates: every update is applied automatically")
 		case "none":
-			for _, l := range levels {
-				set("updates", "updates."+l, false, "automatic updates off")
+			set("updates", "updates.all", false, "Install software updates off")
+			for _, t := range updateTypes {
+				set("updates", "updates."+t, false, "off, so automatic updates are fully disabled")
 			}
-		case "all":
-			set("updates", "updates.all", true, "apply every update automatically")
-		case "no_impact", "service_restart", "reboot":
-			// Each level includes the less disruptive ones.
-			for _, l := range []string{"no_impact", "service_restart", "reboot"} {
-				set("updates", "updates."+l, true, "automatic up to "+apply)
-				if l == apply {
-					break
+		case "selected":
+			set("updates", "updates.all", false, "Install software updates off: only the selected update types")
+			want := map[string]bool{}
+			for _, t := range u.Types {
+				if !slices.Contains(updateTypes, t) {
+					b.Errors = append(b.Errors, fmt.Sprintf("update type must be one of %s, not %q", strings.Join(updateTypes, ", "), t))
 				}
+				want[t] = true
+			}
+			for _, t := range updateTypes {
+				set("updates", "updates."+t, want[t], "")
 			}
 		default:
-			b.Errors = append(b.Errors, fmt.Sprintf("updates.apply must be none, no_impact, service_restart, reboot or all, not %q", apply))
+			b.Errors = append(b.Errors, fmt.Sprintf("updates.apply must be all, none or selected, not %q", u.Apply))
 		}
 	} else {
-		b.Defaults = append(b.Defaults, "automatic updates (sensor default)")
+		b.Defaults = append(b.Defaults, "software updates: Install software updates on, the sensor downloads every update from Corelight Cloud Services and applies it")
 	}
 
 	// Advanced settings the user asked for.

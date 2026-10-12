@@ -239,7 +239,8 @@ Compare the sensor policies on prod and lab.
 - Network: keep or replace the local network blocks, traffic exclusion filter, NTP servers, diagnostic syslog, and a proxy if the sensors need one.
 - Exports: batch export of Zeek log archives (SFTP or S3) and streaming exporters (any type the Fleet Manager offers; unset fields take their defaults, as in the web interface).
 - Detection and enrichment: Suricata policy, YARA ruleset, input and intel collections on the target.
-- Performance monitoring (metrics through Zeek logs, syslog or Graphite; optionally the Network Performance Monitoring package) and automatic updates (through Fleet Manager, and which kinds to apply).
+- Performance monitoring ("Enable reporting through Zeek log streams", syslog or Graphite; separately the Network Performance Monitoring package, which detects network performance anomalies).
+- Software updates. "Install software updates" is on by default: each sensor downloads its own updates from Corelight Cloud Services and applies them. Offline updates are loaded into Fleet Manager and delivered from there. Fully disabling automatic updates turns off Install software updates and all four update types (no impact, service restart, visible change, reboot); you can also apply only selected types.
 
 Anything not asked about stays at the sensor default, and the preview lists those defaults. Other advanced settings are set only when you ask for them.
 

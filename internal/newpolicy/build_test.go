@@ -25,6 +25,8 @@ func props() map[string]any {
 }
 
 var hec = map[string]any{"hec": map[string]any{"elements": []any{
+	map[string]any{"fieldProperties": map[string]any{"fieldName": "name", "defaultValue": "HEC Exporter"}},
+	map[string]any{"fieldProperties": map[string]any{"fieldName": "type", "defaultValue": "hec"}},
 	map[string]any{"fieldProperties": map[string]any{"fieldName": "hec_endpoint", "validators": []any{map[string]any{"type": "required"}}}},
 	map[string]any{"fieldProperties": map[string]any{"fieldName": "hec_token", "noLog": true}},
 	map[string]any{"fieldProperties": map[string]any{"fieldName": "hec_index"}},
@@ -108,6 +110,9 @@ func TestExportsSecretsAndUpdates(t *testing.T) {
 	tok := got[ExporterSecretKey("Splunk", "hec_token")]
 	if !strings.HasPrefix(tok, "bro.exporters.") || !strings.HasSuffix(tok, ".hec_token") {
 		t.Errorf("exporter secret target %q", tok)
+	}
+	if !hasPrefixKeyValue(b.Configuration, ".name", "Splunk") {
+		t.Error("the exporter's name was replaced by the type's default name")
 	}
 	if !hasPrefixKeyValue(b.Configuration, ".hec_fields", "") {
 		t.Error("required field with a default not filled")

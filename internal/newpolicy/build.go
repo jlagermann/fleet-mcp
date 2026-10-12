@@ -151,6 +151,17 @@ func ExporterSecretKey(name, field string) string { return "exporter:" + name + 
 
 func on(b *bool) bool { return b == nil || *b }
 
+// reason says why an on-by-default option has its value.
+func reason(b *bool) string {
+	if b == nil {
+		return "on by default"
+	}
+	if *b {
+		return "on, as asked"
+	}
+	return "off, as asked"
+}
+
 // Build turns a Spec into a configuration, checked against the target's
 // settings schema (props) and exporter types (exporters).
 func Build(s Spec, props, exporters map[string]any) *Built {
@@ -174,20 +185,20 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 	}
 
 	// Access.
-	set("access", "security.ssh.enable", on(s.SSH), "on by default")
+	set("access", "security.ssh.enable", on(s.SSH), reason(s.SSH))
 	if s.SSHNetworks != "" {
 		set("access", "security.ssh.networks", s.SSHNetworks, "")
 	}
-	set("access", "security.http.enable", on(s.HTTPS), "on by default")
+	set("access", "security.http.enable", on(s.HTTPS), reason(s.HTTPS))
 	if s.HTTPSNetworks != "" {
 		set("access", "security.http.networks", s.HTTPSNetworks, "")
 	}
 
 	// Machine learning and anomaly detection.
 	ml, ad := on(s.MachineLearning), on(s.AnomalyDetection)
-	set("detection", "corelight.ml.enable", ml, "on by default")
+	set("detection", "corelight.ml.enable", ml, reason(s.MachineLearning))
 	set("detection", "bro.pkgs.corelight.ml_package.loaded", ml, "loads the machine learning package")
-	set("detection", "corelight.anomaly_detection.enable", ad, "on by default")
+	set("detection", "corelight.anomaly_detection.enable", ad, reason(s.AnomalyDetection))
 	if ml || ad {
 		b.Warnings = append(b.Warnings, "machine learning and anomaly detection need at least 32 GB RAM and 8 CPUs on virtual and software sensors (all physical sensors qualify); a sensor below that gets an automatic exception. Anomaly detection trains for 31 days before it alerts.")
 	}
@@ -411,8 +422,8 @@ func (b *Built) exporters(list []Exporter, types map[string]any, set func(string
 				b.secretTargets = append(b.secretTargets, secretTarget{store: ExporterSecretKey(e.Name, name), setting: prefix + name})
 				continue
 			}
-			if _, given := e.Settings[name]; given {
-				continue
+			if _, given := e.Settings[name]; given || name == "name" || name == "type" {
+				continue // name and type are set above, never from the defaults
 			}
 			switch {
 			case f.hasDefault:

@@ -103,6 +103,9 @@ func registerNewPolicyWrite(s *mcp.Server, d *Deps) {
 		}
 		auditErr := d.Audit.Write(rec)
 		out := map[string]any{"executed": true, "fleet": c.Name, "policy_id": id, "name": a.Name, "verification": verification}
+		if runErr == nil && len(verification) == 0 {
+			out["verification"] = "read back: every setting, secret and link matches the plan"
+		}
 		var notes []string
 		if auditErr != nil {
 			notes = append(notes, "WARNING: audit log write failed: "+auditErr.Error())

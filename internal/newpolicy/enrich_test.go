@@ -52,6 +52,39 @@ func TestCheckEnrichment(t *testing.T) {
 		t.Errorf("check %+v", c)
 	}
 
+	// Readers reported by connected sensors (bro.inputs) beat suggestions
+	// and answer files fleet-mcp does not know.
+	catalog := map[string]any{"list": []any{
+		map[string]any{"fleet.connected": true, "bro.inputs": []any{
+			map[string]any{"name": "dns_bypass_authorized.tsv", "package": "customer:dns-bypass"},
+			map[string]any{"name": "stepping-stone-server-wl.txt", "package": "corelight:stepping-stones"},
+			map[string]any{"name": "datared-http-uri-wl.txt", "package": "corelight:datared"},
+		}},
+		map[string]any{"fleet.connected": false, "bro.inputs": []any{map[string]any{"name": "ghost.tsv", "package": "customer:gone"}}},
+	}}
+	p = &Plan{Built: Build(Spec{Name: "x", Profile: EastWest}, props(), nil), BundlePackages: []string{":home:james:zeek-packages:dns-bypass"}}
+	p.loadSensorReaders(catalog)
+	p.checkEnrichment("input", map[string]any{"name": "lab", "sources": []any{
+		src("d", "dns_bypass_authorized.tsv"), src("s", "stepping-stone-server-wl.txt"), src("g", "ghost.tsv"),
+	}})
+	rb := map[string]string{}
+	for _, s := range p.Enrichments[0].Sources {
+		rb[s.File] = s.ReadBy
+	}
+	if rb["dns_bypass_authorized.tsv"] != "customer:dns-bypass (reported by the sensors)" || rb["stepping-stone-server-wl.txt"] != "corelight:stepping-stones (reported by the sensors)" {
+		t.Errorf("sensor readers: %v", rb)
+	}
+	if q := strings.Join(p.Questions, "\n"); !strings.Contains(q, "ghost.tsv") || strings.Contains(q, "dns_bypass") {
+		t.Errorf("questions: %s", q)
+	}
+	// Reported reader not enabled in this policy (no bundle package).
+	p = &Plan{Built: Build(Spec{Name: "x", Profile: NoProfile}, props(), nil)}
+	p.loadSensorReaders(catalog)
+	p.checkEnrichment("input", map[string]any{"name": "lab", "sources": []any{src("d", "dns_bypass_authorized.tsv")}})
+	if q := strings.Join(p.Questions, "\n"); !strings.Contains(q, "with customer:dns-bypass, which this policy does not enable") {
+		t.Errorf("unenabled sensor reader: %s", q)
+	}
+
 	// Old input files no package reads.
 	p = &Plan{Built: Build(Spec{Name: "x", Profile: NoProfile}, props(), nil)}
 	p.checkEnrichment("input", map[string]any{"name": "lab", "sources": []any{src("s", "sni-wl.txt"), src("h", "ssh-inference-server-wl.txt")}})

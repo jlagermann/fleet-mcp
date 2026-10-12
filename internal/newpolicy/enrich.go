@@ -85,6 +85,56 @@ func (p *Plan) enabled(s suggestion) string {
 	return p.bundlePackage(s.bundle...)
 }
 
+// loadSensorReaders collects, from every connected sensor's bro.inputs,
+// which package reads each input file ("corelight:datared",
+// "customer:dns-bypass"). A file is listed there only when a loaded
+// package is looking for it.
+func (p *Plan) loadSensorReaders(catalog any) {
+	p.sensorReaders = map[string][]string{}
+	seen := map[string]bool{}
+	for _, el := range listOf(catalog) {
+		s := obj(el)
+		if s["fleet.connected"] != true {
+			continue
+		}
+		for _, in := range anySlice(s["bro.inputs"]) {
+			m := obj(in)
+			file, pkg := str(m["name"]), str(m["package"])
+			if file == "" || pkg == "" || seen[file+"\x00"+pkg] {
+				continue
+			}
+			seen[file+"\x00"+pkg] = true
+			p.sensorReaders[file] = append(p.sensorReaders[file], pkg)
+		}
+	}
+}
+
+// enabledSensorReader returns the first of the sensor-reported packages
+// that this policy enables: "corelight:<name>" is a Corelight package
+// (bro.pkgs.corelight.<name>.loaded, dashes as underscores), anything else
+// ("customer:<name>") a bundle package whose name ends in <name>.
+func (p *Plan) enabledSensorReader(pkgs []string) string {
+	for _, pkg := range pkgs {
+		origin, name, ok := strings.Cut(pkg, ":")
+		if !ok {
+			origin, name = "", pkg
+		}
+		if origin == "corelight" {
+			key := "bro.pkgs.corelight." + strings.ReplaceAll(name, "-", "_") + ".loaded"
+			if p.Built.Configuration[key] == true {
+				return pkg
+			}
+			continue
+		}
+		for _, bp := range p.BundlePackages {
+			if strings.HasSuffix(strings.ToLower(bp), strings.ToLower(name)) {
+				return pkg
+			}
+		}
+	}
+	return ""
+}
+
 // packageEnabled reports whether a package the user named is enabled: a
 // Corelight package by name or key, or a bundle package by part of its name.
 func (p *Plan) packageEnabled(name string) bool {
@@ -166,6 +216,15 @@ func (p *Plan) checkEnrichment(kind string, coll map[string]any) {
 				st.ReadBy = reader + " (as the user said)"
 				if !p.packageEnabled(reader) {
 					warn("%s is to be read by %s, which is not among this policy's enabled packages: make sure it is loaded (for example from the custom bundle)", st.File, reader)
+				}
+			} else if pkgs := p.sensorReaders[st.File]; len(pkgs) > 0 {
+				// A connected sensor lists the file in bro.inputs: a package
+				// it has loaded reads it. That is authoritative for which
+				// package; whether this policy loads it is checked here.
+				if st.ReadBy = p.enabledSensorReader(pkgs); st.ReadBy != "" {
+					st.ReadBy += " (reported by the sensors)"
+				} else {
+					p.Questions = append(p.Questions, fmt.Sprintf("Sensors on this Fleet Manager read %s (source %s) with %s, which this policy does not enable. Enable it (for a customer package, in the custom bundle), or name another package that reads it (input_readers); otherwise the file reaches the sensors and nothing uses it.", st.File, st.Alias, strings.Join(pkgs, " or ")))
 				}
 			} else if obsolete[st.File] {
 				st.ReadBy = "nothing (obsolete)"

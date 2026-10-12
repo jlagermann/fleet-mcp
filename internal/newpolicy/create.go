@@ -38,6 +38,7 @@ type Plan struct {
 	ConfigErrors    map[string]string `json:"config_errors,omitempty"`
 	Blockers        []string          `json:"blockers,omitempty"`
 	links           map[string]any
+	sensorReaders   map[string][]string // input file -> packages, from the sensors' bro.inputs
 	packagesEnabled map[string]bool
 	usedSecrets     []string
 }
@@ -179,6 +180,12 @@ func (p *Plan) resolveLinks(ctx context.Context, api migrate.API) error {
 					}
 				}
 			}
+		}
+	}
+	if s.InputCollection != "" {
+		var catalog any
+		if err := api.GetJSON(ctx, "/fleet/v1/sensor/catalog", nil, &catalog); err == nil {
+			p.loadSensorReaders(catalog)
 		}
 	}
 	defer func() {

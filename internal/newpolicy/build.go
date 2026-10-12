@@ -32,7 +32,7 @@ type Spec struct {
 
 	// Network. Empty keeps the sensor default.
 	LocalNets     string `json:"local_nets,omitempty" jsonschema:"replace the local network blocks Zeek considers local, comma-separated CIDRs (empty keeps the defaults)"`
-	TrafficFilter string `json:"traffic_filter,omitempty" jsonschema:"traffic exclusion filter (BPF) for traffic the sensor should ignore"`
+	TrafficFilter string `json:"traffic_filter,omitempty" jsonschema:"traffic exclusion filter: the sensor's limited BPF naming only what to exclude (it is applied as not (filter)); no one-direction src/dst filters, VLAN, ATM/MTP or packet-data/arithmetic expressions"`
 	NTPServers    string `json:"ntp_servers,omitempty" jsonschema:"NTP servers, comma-separated"`
 	SyslogServer  string `json:"syslog_server,omitempty" jsonschema:"syslog server for sensor diagnostics, host:port"`
 	ProxyServer   string `json:"proxy_server,omitempty" jsonschema:"proxy URL for Corelight cloud services, if the sensors need one"`
@@ -210,7 +210,15 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 		b.Defaults = append(b.Defaults, "local network blocks (bro.site.local_nets): Zeek's default private and reserved ranges")
 	}
 	if s.TrafficFilter != "" {
-		set("network", "bro.site.ignore_bpf", s.TrafficFilter, "traffic exclusion filter")
+		set("network", "bro.site.ignore_bpf", s.TrafficFilter, "traffic exclusion filter: traffic matching it is not analyzed")
+		restrictive := true
+		if v, ok := s.Settings["bro.site.restrictive_bpf"]; ok && (v == false || v == "false" || v == "False") {
+			restrictive = false
+			b.Warnings = append(b.Warnings, "restrictive BPF is off: one-direction filters apply per packet; Corelight strongly recommends contacting Support before disabling it")
+		}
+		for _, p := range CheckExclusionFilter(s.TrafficFilter, restrictive) {
+			b.Errors = append(b.Errors, "traffic exclusion filter: "+p)
+		}
 	}
 	if s.NTPServers != "" {
 		set("network", "network.management.ntp.server", s.NTPServers, "")

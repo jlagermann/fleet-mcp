@@ -16,6 +16,7 @@ func TestShellCommand(t *testing.T) {
 		"system_log":    {Check: "system_log", File: "k3s.log", Pattern: "it's \"quoted\"; $(reboot)"},
 		"datastore":     {Check: "datastore"},
 		"deploy":        {Check: "deploy"},
+		"node":          {Check: "node", Pattern: "Oct 12 14:5"},
 	}
 	for name, a := range ok {
 		cmd, err := shellCommand(a)
@@ -35,6 +36,10 @@ func TestShellCommand(t *testing.T) {
 	cmd, _ = shellCommand(ok["deploy"])
 	if !strings.Contains(cmd, `running command \"sensor deploy\"`) || !strings.Contains(cmd, "tail -n 60") || !strings.Contains(cmd, "sensor deploy success") {
 		t.Errorf("deploy: %s", cmd)
+	}
+	cmd, _ = shellCommand(ok["node"])
+	if !strings.Contains(cmd, "grep -i -F -e 'Oct 12 14:5' /system-logs/kubelet.log") || !strings.Contains(cmd, "podStartSLOduration") {
+		t.Errorf("node: %s", cmd)
 	}
 	cmd, _ = shellCommand(ok["service_logs"])
 	if !strings.Contains(cmd, "-l 2000") || !strings.Contains(cmd, "-s 'sensor-operator' -c 'manager'") {

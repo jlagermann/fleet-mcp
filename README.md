@@ -318,7 +318,7 @@ Move Lab-Sensor6 from prod to lab.
 
 Two read-only tools, used in this order, and one that acts on the sensor:
 
-1. **`fm_sensor_diagnose`** answers from Fleet Manager in one call (two API requests for the whole fleet). Without a sensor it covers every sensor that is not healthy or not connected. For each: the services that are not running and their messages, the version the sensor reports versus the NGS (container platform) version it actually runs, the last software update, config apply errors and failed fields, exceptions, ended licenses and failed metrics, and whether the same service fails on the other sensors of the policy. It ends with findings and next steps.
+1. **`fm_sensor_diagnose`** answers from Fleet Manager in one call (two API requests for the whole fleet). Without a sensor it covers every sensor that is not healthy or not connected. For each: the services that are not running and their messages, the version the sensor reports versus the NGS (container platform) version it actually runs, the last software update, config apply errors and failed fields, exceptions, ended licenses and failed metrics, and whether the same service fails on the other sensors of the policy. It ends with findings and next steps: a deploy that failed on a timeout points to slow storage (with the checks that confirm it and how to retry), a sensor newer than its Fleet Manager is flagged (Corelight recommends upgrading Fleet Manager first), a failed Base Services gets the reboot-then-custom-packages steps, and exceptions get a reminder that they may be left over from adding the sensor to a group with a policy.
 2. **`fm_sensor_shell`** looks at the sensor itself, for what Fleet Manager cannot show. fleet-mcp logs in over SSH as `diag-shell` (its own key if installed, otherwise the `sensor-admin-password` secret) and runs one of a fixed set of checks with validated, quoted arguments; it never runs free-form commands and never changes the sensor. The first connection to a sensor shows its SSH host key fingerprint for you to approve; it is then pinned.
 
 | Check | What it shows |
@@ -331,6 +331,7 @@ Two read-only tools, used in this order, and one that acts on the sensor:
 | `system_logs`, `system_log` | The host logs in `/system-logs` (k3s, containerd, ansible, sensor API and others), and the end of one of them |
 | `disk` | `df -h` |
 | `datastore` | Kubernetes datastore latency (k3s "Slow SQL" warnings): tens of seconds means slow storage, which makes upgrade jobs time out |
+| `node` | Whether the sensor host is starved, from `kubelet.log`: exec probe timeouts (10 s each) and the slowest and latest pod start-ups. Probe timeouts and start-ups of minutes mean slow storage (or CPU). `pattern` narrows it to a time, e.g. `Oct 12 14:5` |
 
 `pattern` keeps only lines containing a text and `lines` sets how many (default 200, 60 for `deploy`, at most 2000).
 
@@ -394,7 +395,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_sensors_list` | One summary row per sensor: health, connection, version, group, policy, config-apply state |
 | `fm_sensor_get` | Full detail for one sensor (by uid or name) |
 | `fm_sensor_diagnose` | Why sensors are unhealthy, from Fleet Manager in one call: failed services and messages, reported vs deployed version, last update, config errors, exceptions, compared with the other sensors on the policy, with findings and next steps |
-| `fm_sensor_shell` | Read-only checks on the sensor itself as diag-shell: status, version, latest deploy run, upgrade history, service, exporter and pod logs, host logs, disk, datastore latency |
+| `fm_sensor_shell` | Read-only checks on the sensor itself as diag-shell: status, version, latest deploy run, upgrade history, service, exporter and pod logs, host logs, disk, datastore latency, node starvation |
 | `fm_groups_list` | Sensor groups, their policy and members |
 | `fm_policies_list` / `fm_policy_get` | Sensor policies and their linked content |
 | `fm_suricata_policies_list` / `fm_suricata_policy_get` | Suricata policies, sources, modifier files and settings |

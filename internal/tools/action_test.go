@@ -32,3 +32,20 @@ func TestSensorActions(t *testing.T) {
 		t.Errorf("apply with an update pending: %v", b)
 	}
 }
+
+func TestNewerThan(t *testing.T) {
+	for _, c := range []struct {
+		a, b      string
+		newer, ok bool
+	}{
+		{"29.3.0-ca1", "29.2.2-1", true, true},
+		{"29.2.2-ca1", "29.2.2-16847904621", false, true},
+		{"29.2.1", "29.2.2-1", false, true},
+		{"30.0.0", "29.9.9", true, true},
+		{"", "29.2.2", false, false},
+	} {
+		if n, ok := newerThan(c.a, c.b); n != c.newer || ok != c.ok {
+			t.Errorf("newerThan(%q, %q) = %v, %v", c.a, c.b, n, ok)
+		}
+	}
+}

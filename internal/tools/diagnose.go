@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
+	"github.com/jlagermann/fleet-mcp/internal/spec"
 )
 
 // fm_sensor_diagnose condenses what Fleet Manager knows about an unhealthy
@@ -21,6 +22,10 @@ import (
 // status), so it is cheap enough to run on every sensor.
 
 var deployedVersion = regexp.MustCompile(`does not match deployed version '([^']+)'`)
+
+// jobTimeout matches deploy failures caused by waiting too long: a job,
+// pod or daemonset that did not become ready in time.
+var jobTimeout = regexp.MustCompile(`(?i)timed out|not ready after|deadline exceeded`)
 
 // okStatus are service states that are not a problem.
 var okStatus = map[string]bool{"running": true, "ok": true, "": true}
@@ -105,10 +110,13 @@ func registerDiagnose(s *mcp.Server, d *Deps) {
 				}
 			}
 		}
+		// The FM version, to flag sensors newer than their Fleet Manager;
+		// empty when it cannot be read.
+		fmVersion, _ := spec.Version(ctx, c.Client)
 		now := time.Now()
 		var out []sensorDiagnosis
 		for _, s := range want {
-			out = append(out, diagnose(s, cat, updates[fmt.Sprint(s["uid"])], now))
+			out = append(out, diagnose(s, cat, updates[fmt.Sprint(s["uid"])], fmVersion, now))
 		}
 		healthy := len(cat)
 		for _, s := range cat {
@@ -121,7 +129,7 @@ func registerDiagnose(s *mcp.Server, d *Deps) {
 	})
 }
 
-func diagnose(s map[string]any, cat []map[string]any, upd map[string]any, now time.Time) sensorDiagnosis {
+func diagnose(s map[string]any, cat []map[string]any, upd map[string]any, fmVersion string, now time.Time) sensorDiagnosis {
 	st := s["extendedinformation.status"]
 	dg := sensorDiagnosis{
 		Name: fmt.Sprint(s["name"]), UID: fmt.Sprint(s["uid"]), MgmtIPv4: jsonview.Lookup(st, "/network.address.v4"),
@@ -204,8 +212,29 @@ func diagnose(s map[string]any, cat []map[string]any, upd map[string]any, now ti
 		if healthyPeers := countHealthy(peers); healthyPeers > 0 {
 			finding("%d other sensors on policy %v took the same update and are healthy, so the update itself and the policy's content (including its bundle) are less likely the cause than something on this sensor", healthyPeers, s["policy.name"])
 		}
-		step("look on the sensor before changing anything: fm_sensor_shell check upgrade (every deploy attempt: pre-flight, bootstrap, success or failure; the sensor reruns the deploy on its own later, so later attempts may have different errors), check datastore (slow storage makes upgrade jobs time out) and check status")
-		step("if the attempts failed on timeouts, let the next automatic attempt run when the sensors are not all upgrading at once, or reboot this sensor alone; if it keeps failing, open a Corelight Support case with the messages (root access on a sensor needs a Support escalation)")
+		timedOut := false
+		for _, pb := range dg.Problems {
+			if strings.HasPrefix(pb.ID, "ngs") && jobTimeout.MatchString(pb.Message) {
+				timedOut = true
+			}
+		}
+		step("look on the sensor before changing anything: fm_sensor_shell check deploy (the latest deploy run) and check upgrade (every attempt: pre-flight, bootstrap, success or failure; the sensor reruns the deploy at boot and daily, so later attempts may have different errors), check datastore and check node (slow storage makes upgrade jobs time out) and check status")
+		if timedOut {
+			finding("the deploy failed on a timeout. On a virtual sensor that almost always means slow storage: the Kubernetes datastore and container start-up wait on disk I/O, worst when several sensors share a hypervisor datastore or upgrade at the same time. The sensor itself is usually fine")
+			step("confirm with fm_sensor_shell check datastore (Slow SQL of tens of seconds) and check node (exec probe timeouts, pod start-ups of minutes); on the hypervisor, check the latency of the datastore holding the sensor's disk (tens of milliseconds per command while idle means it is saturated)")
+			step("retry the deploy alone: fm_sensor_action reboot while the other VMs on that datastore are quiet, or let the daily automatic attempt run. If it keeps timing out, give the sensor faster storage (SSD, or a datastore it does not share with the other sensors) before opening a Corelight Support case")
+		} else {
+			step("if a reboot has not been tried, fm_sensor_action reboot reruns the deploy; if it keeps failing, open a Corelight Support case with the messages (root access on a sensor needs a Support escalation)")
+		}
+	}
+	if newer, ok := newerThan(dg.Version, fmVersion); ok && newer {
+		finding("the sensor runs %s but Fleet Manager is %s. Corelight recommends upgrading Fleet Manager before its sensors: an older Fleet Manager may not recognize settings added in the newer sensor release", dg.Version, fmVersion)
+		step("upgrade Fleet Manager to %s or later", versionCore(dg.Version))
+	}
+	for _, pb := range dg.Problems {
+		if strings.Contains(strings.ToLower(pb.Name), "base services") && strings.EqualFold(pb.Status, "failed") {
+			step("Base Services (the sensor's Zeek services) failed: reboot first (fm_sensor_action reboot); if it stays failed, a custom package may conflict with the base packages: set the policy's custom package bundle to None (or disable the custom packages on an unassigned sensor), apply, retry a sync stuck in pending once, and reboot again")
+		}
 	}
 	for _, pb := range dg.Problems {
 		if !strings.HasPrefix(pb.ID, "ngs") && strings.EqualFold(pb.Status, "failed") {
@@ -232,6 +261,7 @@ func diagnose(s map[string]any, cat []map[string]any, upd map[string]any, now ti
 			}
 			dg.Except[k] = fmt.Sprintf("%v%s", v, who)
 		}
+		step("exceptions keep the listed settings off the policy. One not set on purpose may be left over from adding the sensor to a group with a policy (Fleet Manager then flags differing settings as exceptions instead of applying the policy): revert it to take the policy value")
 	}
 
 	// Licenses and metrics.
@@ -325,4 +355,37 @@ func msgSuffix(m string) string {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// versionCore returns the leading numbers of a version: "29.2.2" for
+// "29.2.2-ca1" or "29.2.2-16847904621".
+func versionCore(v string) string {
+	end := 0
+	for end < len(v) && (v[end] == '.' || v[end] >= '0' && v[end] <= '9') {
+		end++
+	}
+	return strings.Trim(v[:end], ".")
+}
+
+// newerThan reports whether sensor version a is newer than Fleet Manager
+// version b, comparing major.minor.patch; ok is false when either cannot
+// be read.
+func newerThan(a, b string) (newer, ok bool) {
+	pa, pb := strings.Split(versionCore(a), "."), strings.Split(versionCore(b), ".")
+	if pa[0] == "" || pb[0] == "" {
+		return false, false
+	}
+	for i := 0; i < 3; i++ {
+		var x, y int
+		if i < len(pa) {
+			fmt.Sscan(pa[i], &x)
+		}
+		if i < len(pb) {
+			fmt.Sscan(pb[i], &y)
+		}
+		if x != y {
+			return x > y, true
+		}
+	}
+	return false, true
 }

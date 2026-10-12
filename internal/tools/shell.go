@@ -52,6 +52,7 @@ var shellChecks = map[string]string{
 	"system_logs":   "list the host logs in /system-logs with size and time",
 	"system_log":    "the end of one host log in /system-logs (file, e.g. k3s.log, containerd.log, ansible.log, broala-apid.log), optionally only lines containing pattern",
 	"disk":          "df -h",
+	"node":          "whether the sensor host is starved, from kubelet.log: exec probe timeouts (10 s each) and the slowest and latest pod start-ups; probe timeouts and start-ups of minutes mean slow storage (or CPU), which makes deploy jobs time out (pattern narrows to lines containing it, e.g. a time such as \"Oct 12 14:5\")",
 	"datastore":     "the Kubernetes datastore (kine) latency: how many Slow SQL warnings k3s logged and the slowest; tens of seconds means slow storage, which makes upgrade jobs time out",
 }
 
@@ -59,7 +60,7 @@ type shellArgs struct {
 	target
 	Sensor     string `json:"sensor" jsonschema:"sensor uid or exact name"`
 	SensorHost string `json:"sensor_host,omitempty" jsonschema:"SSH address of the sensor if Fleet Manager does not report its management address"`
-	Check      string `json:"check" jsonschema:"one of: status, version, deploy, upgrade, service_logs, exporter_logs, pod_logs, system_logs, system_log, disk, datastore"`
+	Check      string `json:"check" jsonschema:"one of: status, version, deploy, upgrade, service_logs, exporter_logs, pod_logs, system_logs, system_log, disk, datastore, node"`
 	Service    string `json:"service,omitempty" jsonschema:"service_logs: the service name from status (e.g. sensor-operator)"`
 	Exporter   string `json:"exporter,omitempty" jsonschema:"exporter_logs: the exporter id from status (e.g. exporter-635n2t7kxj)"`
 	Pod        string `json:"pod,omitempty" jsonschema:"pod_logs: the pod name"`
@@ -123,6 +124,21 @@ func shellCommand(a shellArgs) (string, error) {
 			`elif ` + run + ` | grep -q -E 'level="(error|fatal)"'; then echo 'result: errors logged (the deploy failed or is retrying)'; ` +
 			`else echo 'result: still running'; fi; ` +
 			run + ` | grep -E 'level="(info|warning|error|fatal)"' | grep -v -F` + quoteEach(upgradeNoise) + filter + tail + `; fi`
+	case "node":
+		// kubelet shows whether the node itself is starved:
+		// exec probes that time out and pods that take minutes to start.
+		kl := "/system-logs/kubelet.log"
+		src := func(f string) string {
+			if a.Pattern != "" {
+				return "grep -i -F -e " + host.Quote(a.Pattern) + " " + f
+			}
+			return "cat " + f
+		}
+		probe := `ExecSync cmd from runtime service failed.*DeadlineExceeded`
+		cmd = `printf 'exec probe timeouts (kubelet): '; ` + src(kl) + ` | grep -c '` + probe + `'; ` +
+			`echo 'latest at:'; ` + src(kl) + ` | grep '` + probe + `' | tail -n 3 | cut -c1-15; ` +
+			`echo 'slowest pod start-ups (seconds, without image pulls):'; ` + src(kl) + ` | grep -o 'pod="[^"]*" podStartSLOduration=[0-9.]*' | sort -t= -k3 -g | tail -n 5; ` +
+			`echo 'latest pod start-ups:'; ` + src(kl) + ` | grep 'Observed pod startup duration' | tail -n 5 | grep -o '^[A-Z][a-z][a-z] [ 0-9]* [0-9:]*\|pod="[^"]*" podStartSLOduration=[0-9.]*' | paste -d' ' - -`
 	case "version":
 		cmd = ctl + " version"
 	case "upgrade":
@@ -191,7 +207,7 @@ func quoteEach(ss []string) string {
 func registerSensorShell(s *mcp.Server, d *Deps) {
 	f := false
 	var desc []string
-	for _, k := range []string{"status", "version", "deploy", "upgrade", "service_logs", "exporter_logs", "pod_logs", "system_logs", "system_log", "disk", "datastore"} {
+	for _, k := range []string{"status", "version", "deploy", "upgrade", "service_logs", "exporter_logs", "pod_logs", "system_logs", "system_log", "disk", "datastore", "node"} {
 		desc = append(desc, k+": "+shellChecks[k])
 	}
 	mcp.AddTool(s, &mcp.Tool{

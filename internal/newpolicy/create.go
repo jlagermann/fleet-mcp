@@ -26,8 +26,11 @@ type Plan struct {
 	Built *Built `json:"policy"`
 	// Linked shows the resolved Suricata policy, YARA ruleset,
 	// collections and bundle.
-	Linked          map[string]string `json:"linked,omitempty"`
-	BundlePackages  []string          `json:"bundle_packages,omitempty"`
+	Linked         map[string]string `json:"linked,omitempty"`
+	BundlePackages []string          `json:"bundle_packages,omitempty"`
+	// Enrichments follows each linked collection to its sources and the
+	// packages that read them.
+	Enrichments     []EnrichmentCheck `json:"enrichments,omitempty"`
 	MissingSecrets  []string          `json:"missing_secrets,omitempty"`
 	ConfigErrors    map[string]string `json:"config_errors,omitempty"`
 	Blockers        []string          `json:"blockers,omitempty"`
@@ -139,26 +142,52 @@ func (p *Plan) resolveLinks(ctx context.Context, api migrate.API) error {
 		}
 		p.link("YARA ruleset", s.Yara, "yaraRulesetID", namedIDs(anyList(out.YaraRulesets.Rulesets)))
 	}
-	if s.InputCollection != "" || s.IntelCollection != "" {
+	// Collections are checked once the bundle packages are known.
+	type linked struct {
+		kind string
+		coll map[string]any
+	}
+	var colls []linked
+	if s.InputCollection != "" || s.IntelCollection != "" || s.AssetClassification != "" {
 		var out struct {
 			FileCollections struct {
 				Collections []map[string]any `json:"collections"`
 			} `json:"fileCollections"`
 		}
-		if err := gql(ctx, api, `query { fileCollections(input: {pagination: {limit: 10000}}) { collections { id name type } } }`, &out); err != nil {
+		if err := gql(ctx, api, `query { fileCollections(input: {pagination: {limit: 10000}}) { collections { id name type sources { alias name enabled fileId isProcessing processingError metadata connector { name } } } } }`, &out); err != nil {
 			return err
 		}
 		byType := map[string][]any{}
 		for _, c := range out.FileCollections.Collections {
 			byType[str(c["type"])] = append(byType[str(c["type"])], c)
 		}
-		if s.InputCollection != "" {
-			p.link("input collection", s.InputCollection, "inputCollectionID", namedIDs(byType["INPUT"]))
-		}
-		if s.IntelCollection != "" {
-			p.link("intel collection", s.IntelCollection, "intelCollectionID", namedIDs(byType["INTEL"]))
+		for _, l := range []struct{ kind, ref, what, field, typ string }{
+			{"input", s.InputCollection, "input collection", "inputCollectionID", "INPUT"},
+			{"intel", s.IntelCollection, "intel collection", "intelCollectionID", "INTEL"},
+			{"asset classification", s.AssetClassification, "asset classification collection", "resourceCollectionID", "RESOURCE"},
+		} {
+			if l.ref == "" {
+				continue
+			}
+			if id := p.link(l.what, l.ref, l.field, namedIDs(byType[l.typ])); id > 0 {
+				for _, c := range byType[l.typ] {
+					if idOf(obj(c)["id"]) == id {
+						colls = append(colls, linked{l.kind, obj(c)})
+					}
+				}
+			}
 		}
 	}
+	defer func() {
+		var input map[string]any
+		for _, c := range colls {
+			p.checkEnrichment(c.kind, c.coll)
+			if c.kind == "input" {
+				input = c.coll
+			}
+		}
+		p.checkEndpointEnrichment(input)
+	}()
 	if s.Bundle != "" {
 		var list any
 		if err := api.GetJSON(ctx, "/fleet/v1/sensor/bundle", nil, &list); err != nil {

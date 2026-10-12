@@ -51,6 +51,9 @@ type Spec struct {
 	Yara            string `json:"yara_ruleset,omitempty" jsonschema:"YARA ruleset on the target, by name or ID (enables YARA)"`
 	InputCollection string `json:"input_collection,omitempty" jsonschema:"input collection on the target, by name or ID"`
 	IntelCollection string `json:"intel_collection,omitempty" jsonschema:"intel collection on the target, by name or ID"`
+	// AssetClassification links an asset classification (resource)
+	// collection and turns the feature on.
+	AssetClassification string `json:"asset_classification,omitempty" jsonschema:"asset classification collection on the target, by name or ID (fed by the Corelight connector or an uploaded database); turns on asset_classification.enable (Early Access)"`
 
 	Performance *Performance `json:"performance,omitempty" jsonschema:"performance monitoring and reporting"`
 	Updates     *Updates     `json:"updates,omitempty" jsonschema:"automatic software updates"`
@@ -257,6 +260,10 @@ func Build(s Spec, props, exporters map[string]any) *Built {
 	}
 	if s.Yara != "" {
 		set("detection", "corelight.yara.enable", true, "YARA ruleset "+s.Yara)
+	}
+	if s.AssetClassification != "" {
+		set("enrichment", "asset_classification.enable", true, "asset classification collection "+s.AssetClassification)
+		b.Warnings = append(b.Warnings, "asset classification is Early Access: it runs on appliances that meet the system requirements and needs an asset classification license")
 	}
 
 	// Performance monitoring.

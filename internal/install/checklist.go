@@ -107,7 +107,7 @@ func Checklist(ctx context.Context, store *secrets.Store, hostName string, r hos
 			tokenStatus, tokenDetail = Ready, "stored"
 		}
 		add(Item{"From Corelight", "Package repository auth token (Corelight Customer Portal → Downloads → Fleet Manager)", true, tokenStatus, tokenDetail,
-			"In a terminal on this machine: fleet-mcp secret set repo-token (hidden prompt). Never paste it into the chat."})
+			"In a terminal on this machine: " + secrets.Command("secret", "set", secrets.RepoToken) + " (hidden prompt). Never paste it into the chat."})
 
 		certStatus, certDetail := Missing, ""
 		if b, err := store.Get("", secrets.IdentityCert); err == nil {
@@ -122,14 +122,14 @@ func Checklist(ctx context.Context, store *secrets.Store, hostName string, r hos
 			}
 		}
 		add(Item{"From Corelight", "Fleet Manager product identity certificate (.pem with certificate and private key; it carries the Fleet Manager license)", true, certStatus, certDetail,
-			"Save the .pem from Corelight on this machine, then import it with fm_secret_import_file (name identity-cert.pem and the file path) or: fleet-mcp secret import identity-cert.pem <path>."})
+			"Save the .pem from Corelight on this machine, then import it with fm_secret_import_file (name identity-cert.pem and the file path) or: " + secrets.Command("secret", "import", secrets.IdentityCert, "<path>") + "."})
 
 		licStatus := Optional
 		if _, err := store.Get("", secrets.SensorLicense); err == nil {
 			licStatus = Ready
 		}
 		add(Item{"From Corelight", "Software Sensor license (only if Fleet Manager will license Software Sensors)", false, licStatus, "",
-			"Import it with fm_secret_import_file (name sensor-license.txt) or: fleet-mcp secret import sensor-license.txt <path>."})
+			"Import it with fm_secret_import_file (name sensor-license.txt) or: " + secrets.Command("secret", "import", secrets.SensorLicense, "<path>") + "."})
 
 		csStatus, csDetail := Optional, "will be generated"
 		if hostName != "" {
@@ -138,7 +138,8 @@ func Checklist(ctx context.Context, store *secrets.Store, hostName string, r hos
 			}
 		}
 		add(Item{"Your choices", "Sensor community string (pre-shared secret sensors use to connect). Generated if you do not set one; set your own if existing sensors already use a value.", false, csStatus, csDetail,
-			"To use your own: fleet-mcp secret set community-string -host <host>. To read it later for pairing sensors: fleet-mcp secret show community-string -host <host> (your terminal only)."})
+			"To use your own: " + secrets.Command("secret", "set", secrets.CommunityString, "-host", "<host>") + ". To read it later for pairing sensors: " +
+				secrets.Command("secret", "show", secrets.CommunityString, "-host", "<host>") + " (your terminal only)."})
 	}
 
 	add(Item{"Your choices", "Fleet Manager version (default: newest in the repository)", false, Decide, "", "Pass version, e.g. 29.2.2, to pin one."})

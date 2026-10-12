@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jlagermann/fleet-mcp/internal/host"
+	"github.com/jlagermann/fleet-mcp/internal/secrets"
 )
 
 // SecretsFile holds secret setting values (exporter tokens) for a package,
@@ -233,11 +234,11 @@ func (p *Plan) planSecrets(dir string, m *Manifest, opts ImportOptions) error {
 				len(missing), strings.Join(labels, "; "), m.Source.Fleet),
 			Resolve: map[string]string{
 				"database": `preview again with exporter_tokens "database"`,
-				"prompt":   `preview again with exporter_tokens "prompt"; the user runs: fleet-mcp policy tokens ` + pkg,
+				"prompt":   `preview again with exporter_tokens "prompt"; the user runs: ` + secrets.Command("policy", "tokens", pkg),
 			},
 		})
 	case "prompt":
-		p.block("%d secrets still need values: run `fleet-mcp policy tokens %s` in a terminal, enter them, then preview again (%s)", len(missing), pkg, strings.Join(labels, "; "))
+		p.block("%d secrets still need values: run `%s` in a terminal, enter them, then preview again (%s)", len(missing), secrets.Command("policy", "tokens", pkg), strings.Join(labels, "; "))
 	case "database":
 		p.block("%d secrets were not found in %s's database: %s; use exporter_tokens \"prompt\" for them", len(missing), m.Source.Fleet, strings.Join(labels, "; "))
 	}

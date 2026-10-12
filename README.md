@@ -243,7 +243,7 @@ Compare the sensor policies on prod and lab.
 
 Anything not asked about stays at the sensor default, and the preview lists those defaults. Other advanced settings are set only when you ask for them.
 
-**Secrets** (proxy password, S3 secret key, exporter tokens) are never typed in the chat: you store each at a hidden prompt, for example `fleet-mcp secret set-setting "exporter:Splunk:hec_token"`. The preview says which are needed; they are deleted from the store once the policy holds them.
+**Secrets** (proxy password, S3 secret key, exporter tokens) are never typed in the chat: you store each at a hidden prompt, for example `fleet-mcp secret set-setting "exporter:Splunk:hec_token"`. The preview says which are needed, with each command spelled out by the full path of the fleet-mcp binary (it is often not on your PATH; on Windows the command starts with `& "C:\...\fleet-mcp.exe"` for PowerShell); they are deleted from the store once the policy holds them.
 
 The preview is validated by the target Fleet Manager itself before anything is created. If linking the Suricata policy, YARA ruleset, collections or bundle fails, the new policy is deleted again.
 

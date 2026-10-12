@@ -12,6 +12,7 @@ import (
 
 	"github.com/jlagermann/fleet-mcp/internal/metrics"
 	"github.com/jlagermann/fleet-mcp/internal/migrate"
+	"github.com/jlagermann/fleet-mcp/internal/secrets"
 )
 
 // Secrets supplies setting secrets the user stored at a hidden prompt.
@@ -85,7 +86,7 @@ func Prepare(ctx context.Context, api migrate.API, sec Secrets, s Spec) (*Plan, 
 	}
 	if len(p.MissingSecrets) > 0 {
 		p.Blockers = append(p.Blockers, fmt.Sprintf("store these secrets at a hidden prompt first, one command each: %s",
-			strings.Join(prefixAll("fleet-mcp secret set-setting ", p.MissingSecrets), "; ")))
+			strings.Join(setSettingCommands(p.MissingSecrets), "; ")))
 	}
 
 	if p.Ready() && anyPolicy > 0 {
@@ -108,19 +109,12 @@ func Prepare(ctx context.Context, api migrate.API, sec Secrets, s Spec) (*Plan, 
 	return p, nil
 }
 
-func prefixAll(prefix string, xs []string) []string {
-	out := make([]string, len(xs))
-	for i, x := range xs {
-		out[i] = prefix + quoteArg(x)
+func setSettingCommands(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = secrets.Command("secret", "set-setting", n)
 	}
 	return out
-}
-
-func quoteArg(s string) string {
-	if strings.ContainsAny(s, " ") {
-		return `"` + s + `"`
-	}
-	return s
 }
 
 // resolveLinks finds the Suricata policy, YARA ruleset, collections and

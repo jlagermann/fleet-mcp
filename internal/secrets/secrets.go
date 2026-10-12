@@ -242,15 +242,15 @@ func howTo(name string) string {
 	}
 	switch spec.Kind {
 	case Prompt:
-		return fmt.Sprintf("; the user sets it in a terminal with: fleet-mcp secret set %s", name)
+		return "; the user sets it in a terminal with: " + Command("secret", "set", name)
 	case File:
-		return fmt.Sprintf("; import it with fm_secret_import_file (name %q and the file's path) or: fleet-mcp secret import %s <path>", name, name)
+		return fmt.Sprintf("; import it with fm_secret_import_file (name %q and the file's path) or: %s", name, Command("secret", "import", name, "<path>"))
 	default:
 		if name == SensorSSHKey {
 			return "; fm_sensor_ssh_key creates it"
 		}
 		if spec.Settable {
-			return fmt.Sprintf("; fm_host_install generates it, or the user sets their own first with: fleet-mcp secret set %s -host <host>", name)
+			return "; fm_host_install generates it, or the user sets their own first with: " + Command("secret", "set", name, "-host", "<host>")
 		}
 		return "; fm_host_install creates it"
 	}

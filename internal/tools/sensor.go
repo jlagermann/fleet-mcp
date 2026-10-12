@@ -135,10 +135,10 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 		if a.ConfirmToken == "" {
 			var blockers []string
 			if login.Method == "" {
-				blockers = append(blockers, "no way to log in to the sensor: install fleet-mcp's SSH key with fm_sensor_ssh_key, or the user stores the admin password in a terminal: fleet-mcp secret set "+secrets.SensorPassword)
+				blockers = append(blockers, "no way to log in to the sensor: install fleet-mcp's SSH key with fm_sensor_ssh_key, or the user stores the admin password in a terminal: "+secrets.Command("secret", "set", secrets.SensorPassword))
 			}
 			if csErr != nil {
-				blockers = append(blockers, fmt.Sprintf("%s's community string is not stored; the user runs in a terminal: fleet-mcp secret set %s -host %s", tgt.Name, secrets.CommunityString, tgt.Name))
+				blockers = append(blockers, fmt.Sprintf("%s's community string is not stored; the user runs in a terminal: %s", tgt.Name, secrets.Command("secret", "set", secrets.CommunityString, "-host", tgt.Name)))
 			}
 			// A sensor new to the target lands in UNASSIGNED with no
 			// policy; one that was there before rejoins its old group.

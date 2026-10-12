@@ -76,7 +76,8 @@ func (d *Deps) maxBytes(requested int) int {
 
 // Instructions returns the text sent to MCP clients at initialization.
 func Instructions(writes bool) string {
-	s := instructions + migrateInstructions + newPolicyInstructions + hostInstructions
+	s := instructions + migrateInstructions + newPolicyInstructions + hostInstructions +
+		"\n- fleet-mcp may not be on the user's PATH. Whenever you tell the user to run a fleet-mcp command in a terminal, give it with the full path, as tool results do: " + secrets.Command("secret", "set", "<name>")
 	if writes {
 		return s + writeInstructions
 	}

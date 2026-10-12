@@ -54,7 +54,7 @@ func (s *Store) GetSetting(name string) (string, error) {
 	}
 	b, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && strings.TrimSpace(string(b)) == "") {
-		return "", fmt.Errorf("%s is not stored; the user runs in a terminal: fleet-mcp secret set-setting %s", name, name)
+		return "", fmt.Errorf("%s is not stored; the user runs in a terminal: %s", name, Command("secret", "set-setting", name))
 	}
 	if err != nil {
 		return "", err

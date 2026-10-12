@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/jlagermann/fleet-mcp/internal/secrets"
 )
 
 // Spec is everything the user decides about a new sensor policy.
@@ -384,7 +386,7 @@ func (b *Built) exporters(list []Exporter, types map[string]any, set func(string
 			case !known:
 				b.Errors = append(b.Errors, fmt.Sprintf("exporter %s (%s) has no field %s", e.Name, e.Type, k))
 			case f.secret:
-				b.Errors = append(b.Errors, fmt.Sprintf("exporter %s field %s is a secret: store it with fleet-mcp secret set-setting %s instead", e.Name, k, ExporterSecretKey(e.Name, k)))
+				b.Errors = append(b.Errors, fmt.Sprintf("exporter %s field %s is a secret: store it with %s instead", e.Name, k, secrets.Command("secret", "set-setting", ExporterSecretKey(e.Name, k))))
 			default:
 				set("export", prefix+k, e.Settings[k], "")
 			}

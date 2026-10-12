@@ -31,54 +31,90 @@ type SourceStatus struct {
 	ReadBy    string `json:"read_by,omitempty"`
 }
 
-// inputReader names the package that reads an input file: a Corelight
-// package key, or a word that a custom bundle package's name contains.
-type inputReader struct {
+// A suggestion is the package fleet-mcp expects to read an input file. It
+// is only a suggestion: customers write their own packages (which no docs
+// list) and packages change (a newer version may stop reading a file), so
+// the user can name any package as a file's reader with input_readers.
+type suggestion struct {
 	name   string
-	key    string // bro.pkgs.corelight.<key>.loaded
-	bundle []string
+	key    string   // bro.pkgs.corelight.<key>.loaded, for Corelight packages
+	bundle []string // words a custom bundle package's name contains
+	wl     bool     // an allowlist named after its package (*-wl.txt)
 }
 
-// inputReaders maps input file names (or name prefixes ending in "-") to
-// the package that reads them, from the sensor docs ("Zeek packages that
-// support input files") and the connector docs (host and CVE data for the
-// endpoint enrichment packages).
-var inputReaders = map[string]inputReader{
-	"cert-hygiene-server-wl.txt":         {name: "Cert Hygiene", key: "cert_hygiene"},
-	"cert-hygiene-sni-wl.txt":            {name: "Cert Hygiene", key: "cert_hygiene"},
-	"datared-":                           {name: "Data Reduction", key: "datared"},
-	"encryption-detection-server-wl.txt": {name: "Encryption Detection", key: "encryption_detection"},
-	"rdp-inference-server-wl.txt":        {name: "RDP Inference", key: "rdp_inference"},
-	"stepping-stone-server-wl.txt":       {name: "Stepping Stones", key: "stepping_stones"},
-	"hosts_data.tsv":                     {name: "an endpoint enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment"}},
-	"cve_data.tsv":                       {name: "an endpoint or CVE enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment", "cve-enrichment"}},
+// suggestions maps input file names (or prefixes ending in "-") to the
+// package expected to read them: the sensor docs ("Zeek packages that
+// support input files"), the *-wl.txt allowlists named after their
+// package, the connector docs (host and CVE data) and icannTLD.
+var suggestions = map[string]suggestion{
+	"cert-hygiene-":           {name: "Cert Hygiene", key: "cert_hygiene", wl: true},
+	"datared-":                {name: "Data Reduction", key: "datared", wl: true},
+	"encryption-detection-":   {name: "Encryption Detection", key: "encryption_detection", wl: true},
+	"rdp-inference-":          {name: "RDP Inference", key: "rdp_inference", wl: true},
+	"ssh-inference-":          {name: "SSH Inference", key: "ssh_inference", wl: true},
+	"stepping-stone-":         {name: "Stepping Stones", key: "stepping_stones", wl: true},
+	"hosts_data.tsv":          {name: "an endpoint enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment"}},
+	"cve_data.tsv":            {name: "an endpoint or CVE enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment", "cve-enrichment"}},
+	"trusted_domains.dat":     {name: "icannTLD (custom bundle)", bundle: []string{"icanntld"}},
+	"_level_public_icann.dat": {name: "icannTLD (custom bundle)", bundle: []string{"icanntld"}},
 }
 
-func readerFor(file string) (inputReader, bool) {
-	if r, ok := inputReaders[file]; ok {
-		return r, true
+func suggestFor(file string) (suggestion, bool) {
+	if s, ok := suggestions[file]; ok {
+		return s, true
 	}
-	for prefix, r := range inputReaders {
-		if strings.HasSuffix(prefix, "-") && strings.HasPrefix(file, prefix) {
-			return r, true
+	for k, s := range suggestions {
+		if (strings.HasSuffix(k, "-") && strings.HasPrefix(file, k)) || (strings.HasPrefix(k, "_") && strings.HasSuffix(file, k)) {
+			return s, true
 		}
 	}
-	return inputReader{}, false
+	return suggestion{}, false
 }
 
-// enabledReader returns the enabled package that reads file, if any.
-func (p *Plan) enabledReader(r inputReader) string {
-	if r.key != "" && p.Built.Configuration["bro.pkgs.corelight."+r.key+".loaded"] == true {
-		return r.name
+// enabled returns the enabled package matching s, if any.
+func (p *Plan) enabled(s suggestion) string {
+	if s.key != "" && p.Built.Configuration["bro.pkgs.corelight."+s.key+".loaded"] == true {
+		return s.name
 	}
+	return p.bundlePackage(s.bundle...)
+}
+
+// packageEnabled reports whether a package the user named is enabled: a
+// Corelight package by name or key, or a bundle package by part of its name.
+func (p *Plan) packageEnabled(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, pk := range p.Built.Packages {
+		if strings.ToLower(pk.Name) == n || strings.Contains(strings.ToLower(pk.Key), "."+n+".") {
+			return true
+		}
+	}
+	return n != "" && p.bundlePackage(n) != ""
+}
+
+// bundlePackage returns the enabled bundle package whose name contains one
+// of words.
+func (p *Plan) bundlePackage(words ...string) string {
 	for _, bp := range p.BundlePackages {
-		for _, w := range r.bundle {
+		for _, w := range words {
 			if strings.Contains(strings.ToLower(bp), w) {
 				return bp
 			}
 		}
 	}
 	return ""
+}
+
+// packageInputs are input files a package cannot run without (required)
+// or can use (optional), for packages fleet-mcp knows; any other package
+// may need files fleet-mcp cannot know about.
+var packageInputs = []struct {
+	words    []string // in the bundle package name
+	name     string
+	anyOf    []string // at least one of these
+	required []string // all of these
+}{
+	{words: []string{"icanntld"}, name: "icannTLD", required: []string{"1st_level_public_icann.dat", "2nd_level_public_icann.dat", "3rd_level_public_icann.dat", "4th_level_public_icann.dat"}},
+	{words: []string{"endpoint-enrichment"}, name: "endpoint enrichment", anyOf: []string{"hosts_data.tsv", "cve_data.tsv"}},
 }
 
 // checkEnrichment follows a linked collection down to its sources and the
@@ -96,7 +132,7 @@ func (p *Plan) checkEnrichment(kind string, coll map[string]any) {
 	var unknown []string // input files with no known reader
 	defer func() {
 		if len(unknown) > 0 {
-			c.Notes = append(c.Notes, fmt.Sprintf("fleet-mcp does not know which package reads %s: make sure a package in this policy (usually from the custom bundle) does", strings.Join(unknown, ", ")))
+			p.Questions = append(p.Questions, fmt.Sprintf("Which packages read %s? fleet-mcp does not know them (they are likely read by custom packages); name each reader (input_readers) or confirm the package is in this policy, since without one the file does nothing.", strings.Join(unknown, ", ")))
 		}
 		p.Enrichments = append(p.Enrichments, c)
 	}()
@@ -120,9 +156,18 @@ func (p *Plan) checkEnrichment(kind string, coll map[string]any) {
 		}
 		indicators += int(idOf(obj(s["metadata"])["numberOfIndicators"]))
 		if kind == "input" {
-			if r, known := readerFor(st.File); known {
-				if st.ReadBy = p.enabledReader(r); st.ReadBy == "" {
-					warn("nothing in this policy reads %s (source %s): enable %s, or the file reaches the sensors and nothing uses it", st.File, st.Alias, r.name)
+			if reader, said := p.Spec.InputReaders[st.File]; said {
+				st.ReadBy = reader + " (as the user said)"
+				if !p.packageEnabled(reader) {
+					warn("%s is to be read by %s, which is not among this policy's enabled packages: make sure it is loaded (for example from the custom bundle)", st.File, reader)
+				}
+			} else if sg, known := suggestFor(st.File); known {
+				if st.ReadBy = p.enabled(sg); st.ReadBy == "" {
+					caveat := ""
+					if sg.wl {
+						caveat = " (newer versions of a package can stop using an input file)"
+					}
+					p.Questions = append(p.Questions, fmt.Sprintf("Which package reads %s (source %s)? It is usually %s%s, which this policy does not enable. Enable it, or name the package that reads it (input_readers), for example a custom one; if nothing does, the file reaches the sensors and nothing uses it.", st.File, st.Alias, sg.name, caveat))
 				}
 			} else {
 				unknown = append(unknown, st.File)
@@ -147,21 +192,35 @@ func (p *Plan) checkEnrichment(kind string, coll map[string]any) {
 	}
 }
 
-// checkEndpointEnrichment warns when an endpoint enrichment package is
-// enabled but no linked input collection gives it host data.
-func (p *Plan) checkEndpointEnrichment(input map[string]any) {
-	for _, bp := range p.BundlePackages {
-		if !strings.Contains(strings.ToLower(bp), "endpoint-enrichment") {
+// checkPackageInputs warns when an enabled package fleet-mcp knows needs
+// input files that no linked input collection provides.
+func (p *Plan) checkPackageInputs(input map[string]any) {
+	have := map[string]bool{}
+	for _, el := range anySlice(input["sources"]) {
+		have[str(obj(el)["name"])] = true
+	}
+	for _, need := range packageInputs {
+		bp := p.bundlePackage(need.words...)
+		if bp == "" {
 			continue
 		}
-		found := false
-		for _, el := range anySlice(input["sources"]) {
-			if f := str(obj(el)["name"]); f == "hosts_data.tsv" || f == "cve_data.tsv" {
-				found = true
+		var missing []string
+		for _, f := range need.required {
+			if !have[f] {
+				missing = append(missing, f)
 			}
 		}
-		if !found {
-			p.Built.Warnings = append(p.Built.Warnings, fmt.Sprintf("package %s is enabled but no linked input collection has hosts_data.tsv or cve_data.tsv, so it has no data: set up a connector, an input source and an input collection for it", bp))
+		if len(missing) > 0 {
+			p.Built.Warnings = append(p.Built.Warnings, fmt.Sprintf("package %s needs %s in the linked input collection to run; missing: %s", bp, strings.Join(need.required, ", "), strings.Join(missing, ", ")))
+		}
+		if len(need.anyOf) > 0 {
+			found := false
+			for _, f := range need.anyOf {
+				found = found || have[f]
+			}
+			if !found {
+				p.Built.Warnings = append(p.Built.Warnings, fmt.Sprintf("package %s is enabled but the linked input collection has none of %s, so it has no data: set up a connector, an input source and an input collection for it", bp, strings.Join(need.anyOf, ", ")))
+			}
 		}
 	}
 }

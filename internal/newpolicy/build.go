@@ -51,6 +51,9 @@ type Spec struct {
 	Yara            string `json:"yara_ruleset,omitempty" jsonschema:"YARA ruleset on the target, by name or ID (enables YARA)"`
 	InputCollection string `json:"input_collection,omitempty" jsonschema:"input collection on the target, by name or ID"`
 	IntelCollection string `json:"intel_collection,omitempty" jsonschema:"intel collection on the target, by name or ID"`
+	// InputReaders names, per input file, the package the user says reads
+	// it, which may be a custom package fleet-mcp cannot know.
+	InputReaders map[string]string `json:"input_readers,omitempty" jsonschema:"input file name to the package the user says reads it (any package, including custom ones); answers the preview's questions_for_user"`
 	// AssetClassification links an asset classification (resource)
 	// collection and turns the feature on.
 	AssetClassification string `json:"asset_classification,omitempty" jsonschema:"asset classification collection on the target, by name or ID (fed by the Corelight connector or an uploaded database); turns on asset_classification.enable (Early Access)"`

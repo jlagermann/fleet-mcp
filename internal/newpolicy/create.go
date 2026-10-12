@@ -30,7 +30,10 @@ type Plan struct {
 	BundlePackages []string          `json:"bundle_packages,omitempty"`
 	// Enrichments follows each linked collection to its sources and the
 	// packages that read them.
-	Enrichments     []EnrichmentCheck `json:"enrichments,omitempty"`
+	Enrichments []EnrichmentCheck `json:"enrichments,omitempty"`
+	// Questions are for the user before creating: input files whose reader
+	// is not in the policy or not known to fleet-mcp. They do not block.
+	Questions       []string          `json:"questions_for_user,omitempty"`
 	MissingSecrets  []string          `json:"missing_secrets,omitempty"`
 	ConfigErrors    map[string]string `json:"config_errors,omitempty"`
 	Blockers        []string          `json:"blockers,omitempty"`
@@ -186,7 +189,7 @@ func (p *Plan) resolveLinks(ctx context.Context, api migrate.API) error {
 				input = c.coll
 			}
 		}
-		p.checkEndpointEnrichment(input)
+		p.checkPackageInputs(input)
 	}()
 	if s.Bundle != "" {
 		var list any

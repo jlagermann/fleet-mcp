@@ -52,6 +52,13 @@ func TestCheckEnrichment(t *testing.T) {
 		t.Errorf("check %+v", c)
 	}
 
+	// Old input files no package reads.
+	p = &Plan{Built: Build(Spec{Name: "x", Profile: NoProfile}, props(), nil)}
+	p.checkEnrichment("input", map[string]any{"name": "lab", "sources": []any{src("s", "sni-wl.txt"), src("h", "ssh-inference-server-wl.txt")}})
+	if w := strings.Join(p.Built.Warnings, "\n"); strings.Count(w, "old input file") != 2 || len(p.Questions) > 0 {
+		t.Errorf("obsolete files: %s %v", w, p.Questions)
+	}
+
 	// A named reader that is not enabled is warned about.
 	p = &Plan{Built: Build(Spec{Name: "x", Profile: NoProfile}, props(), nil), Spec: Spec{InputReaders: map[string]string{"my_allow.tsv": "my-allowlist"}}}
 	p.checkEnrichment("input", map[string]any{"name": "lab", "sources": []any{src("g", "my_allow.tsv")}})

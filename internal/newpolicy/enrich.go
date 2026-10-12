@@ -51,12 +51,18 @@ var suggestions = map[string]suggestion{
 	"datared-":                {name: "Data Reduction", key: "datared", wl: true},
 	"encryption-detection-":   {name: "Encryption Detection", key: "encryption_detection", wl: true},
 	"rdp-inference-":          {name: "RDP Inference", key: "rdp_inference", wl: true},
-	"ssh-inference-":          {name: "SSH Inference", key: "ssh_inference", wl: true},
 	"stepping-stone-":         {name: "Stepping Stones", key: "stepping_stones", wl: true},
 	"hosts_data.tsv":          {name: "an endpoint enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment"}},
 	"cve_data.tsv":            {name: "an endpoint or CVE enrichment package (custom bundle)", bundle: []string{"endpoint-enrichment", "cve-enrichment"}},
 	"trusted_domains.dat":     {name: "icannTLD (custom bundle)", bundle: []string{"icanntld"}},
 	"_level_public_icann.dat": {name: "icannTLD (custom bundle)", bundle: []string{"icanntld"}},
+}
+
+// obsolete input files are no longer read by any current Corelight
+// package; a source for one can be removed.
+var obsolete = map[string]bool{
+	"sni-wl.txt":                  true,
+	"ssh-inference-server-wl.txt": true,
 }
 
 func suggestFor(file string) (suggestion, bool) {
@@ -161,6 +167,9 @@ func (p *Plan) checkEnrichment(kind string, coll map[string]any) {
 				if !p.packageEnabled(reader) {
 					warn("%s is to be read by %s, which is not among this policy's enabled packages: make sure it is loaded (for example from the custom bundle)", st.File, reader)
 				}
+			} else if obsolete[st.File] {
+				st.ReadBy = "nothing (obsolete)"
+				warn("%s (source %s) is an old input file no current Corelight package reads: remove the source from the collection", st.File, st.Alias)
 			} else if sg, known := suggestFor(st.File); known {
 				if st.ReadBy = p.enabled(sg); st.ReadBy == "" {
 					caveat := ""

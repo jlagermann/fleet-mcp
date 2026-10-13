@@ -327,7 +327,7 @@ Two read-only tools, used in this order, and one that acts on the sensor:
 | `version` | `corelightctl version`: the NGS version installed for the next deploy |
 | `deploy` | The latest NGS deploy run (rerun at every boot and daily): when it started, whether it succeeded, failed or is still running, and its last steps; use it to follow a deploy after a reboot |
 | `upgrade` | Every NGS deploy attempt from `/system-logs/corelightctl.log`: pre-flight checks, bootstrap, success or failure (repeated wait messages removed; `file` reads a rotated copy) |
-| `service_logs`, `exporter_logs`, `pod_logs` | `corelightctl sensor logs` for a service (and container) or exporter; `kubectl logs` for a pod |
+| `service_logs`, `exporter_logs`, `pod_logs` | `corelightctl sensor logs` for a service (and container) or exporter; `kubectl logs` for a pod in `corelight-sensor` or, with `namespace: kube-system`, the Kubernetes system pods (rke2-canal, coredns, kube-controller-manager, kube-scheduler) |
 | `system_logs`, `system_log` | The host logs in `/system-logs` (k3s, containerd, ansible, sensor API and others), and the end of one of them |
 | `disk` | `df -h` |
 | `datastore` | Kubernetes datastore latency (k3s "Slow SQL" warnings): tens of seconds means slow storage, which makes upgrade jobs time out |

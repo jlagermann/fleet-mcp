@@ -13,6 +13,7 @@ func TestShellCommand(t *testing.T) {
 		"service_logs":  {Check: "service_logs", Service: "sensor-operator", Container: "manager", Lines: 5000},
 		"exporter_logs": {Check: "exporter_logs", Exporter: "exporter-635n2t7kxj"},
 		"pod_logs":      {Check: "pod_logs", Pod: "sensor-core-5cddd55b4f-abcde"},
+		"pod_logs_kube": {Check: "pod_logs", Pod: "rke2-canal-7brk5", Container: "calico-node", Namespace: "kube-system", Pattern: "ready", Lines: 3},
 		"system_log":    {Check: "system_log", File: "k3s.log", Pattern: "it's \"quoted\"; $(reboot)"},
 		"datastore":     {Check: "datastore"},
 		"deploy":        {Check: "deploy"},
@@ -41,6 +42,14 @@ func TestShellCommand(t *testing.T) {
 	if !strings.Contains(cmd, "grep -i -F -e 'Oct 12 14:5' /system-logs/kubelet.log") || !strings.Contains(cmd, "podStartSLOduration") {
 		t.Errorf("node: %s", cmd)
 	}
+	cmd, _ = shellCommand(ok["pod_logs_kube"])
+	if !strings.Contains(cmd, "logs -n kube-system 'rke2-canal-7brk5' -c 'calico-node' --tail 2000 | grep -i -F -e 'ready' | tail -n 3") {
+		t.Errorf("pod_logs kube-system: %s", cmd)
+	}
+	cmd, _ = shellCommand(ok["pod_logs"])
+	if !strings.Contains(cmd, "logs -n corelight-sensor 'sensor-core-") {
+		t.Errorf("pod_logs default namespace: %s", cmd)
+	}
 	cmd, _ = shellCommand(ok["service_logs"])
 	if !strings.Contains(cmd, "-l 2000") || !strings.Contains(cmd, "-s 'sensor-operator' -c 'manager'") {
 		t.Errorf("service_logs: %s", cmd)
@@ -63,6 +72,7 @@ func TestShellCommand(t *testing.T) {
 		"dotdot":         {Check: "system_log", File: "a..b"},
 		"pattern nl":     {Check: "system_log", File: "k3s.log", Pattern: "a\nb"},
 		"container":      {Check: "pod_logs", Pod: "p", Container: "-it"},
+		"namespace":      {Check: "pod_logs", Pod: "p", Namespace: "default"},
 	} {
 		if _, err := shellCommand(a); err == nil {
 			t.Errorf("%s: accepted", name)

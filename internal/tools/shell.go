@@ -48,7 +48,7 @@ var shellChecks = map[string]string{
 	"upgrade":       "the NGS deploy/upgrade history from /system-logs/corelightctl.log: pre-flight checks, bootstrap, deploy success or failure, with the repeated wait messages removed (file: a rotated copy such as corelightctl.log-20261011)",
 	"service_logs":  "corelightctl sensor logs for a service (service, optional container), e.g. sensor-operator, sensor-core, kafka",
 	"exporter_logs": "corelightctl sensor logs for an exporter (exporter: its id, e.g. exporter-635n2t7kxj)",
-	"pod_logs":      "kubectl logs for a pod in corelight-sensor (pod, optional container); pod names come from other logs",
+	"pod_logs":      "kubectl logs for a pod (pod, optional container) in corelight-sensor or, with namespace kube-system, the Kubernetes system pods: rke2-canal (calico-node, kube-flannel: the pod network a deploy waits for), coredns, kube-controller-manager-brolin, kube-scheduler-brolin; pod names come from other logs (kubelet.log, containerd.log)",
 	"system_logs":   "list the host logs in /system-logs with size and time",
 	"system_log":    "the end of one host log in /system-logs (file, e.g. k3s.log, containerd.log, ansible.log, broala-apid.log), optionally only lines containing pattern",
 	"disk":          "df -h",
@@ -64,6 +64,7 @@ type shellArgs struct {
 	Service    string `json:"service,omitempty" jsonschema:"service_logs: the service name from status (e.g. sensor-operator)"`
 	Exporter   string `json:"exporter,omitempty" jsonschema:"exporter_logs: the exporter id from status (e.g. exporter-635n2t7kxj)"`
 	Pod        string `json:"pod,omitempty" jsonschema:"pod_logs: the pod name"`
+	Namespace  string `json:"namespace,omitempty" jsonschema:"pod_logs: corelight-sensor (default) or kube-system"`
 	Container  string `json:"container,omitempty" jsonschema:"service_logs or pod_logs: a container in it"`
 	File       string `json:"file,omitempty" jsonschema:"system_log or upgrade: a file in /system-logs"`
 	Pattern    string `json:"pattern,omitempty" jsonschema:"keep only lines containing this text (case-insensitive, plain text, not a regex)"`
@@ -107,6 +108,12 @@ func shellCommand(a shellArgs) (string, error) {
 		filter = " | grep -i -F -e " + host.Quote(a.Pattern)
 	}
 	tail := fmt.Sprintf(" | tail -n %d | cut -c1-%d", n, maxLine)
+	// fetch is how many lines to read from a service or pod log: with a
+	// pattern, the last 2000, so the filter does not search only the last n.
+	fetch := n
+	if a.Pattern != "" {
+		fetch = 2000
+	}
 	var cmd string
 	switch a.Check {
 	case "status":
@@ -159,21 +166,28 @@ func shellCommand(a shellArgs) (string, error) {
 		if a.Container != "" {
 			cmd += " -c " + host.Quote(a.Container)
 		}
-		cmd += fmt.Sprintf(" -l %d", n) + filter + tail
+		cmd += fmt.Sprintf(" -l %d", fetch) + filter + tail
 	case "exporter_logs":
 		if err := need("exporter", a.Exporter, safeName); err != nil {
 			return "", err
 		}
-		cmd = ctl + " sensor logs --no-color -e " + host.Quote(a.Exporter) + fmt.Sprintf(" -l %d", n) + filter + tail
+		cmd = ctl + " sensor logs --no-color -e " + host.Quote(a.Exporter) + fmt.Sprintf(" -l %d", fetch) + filter + tail
 	case "pod_logs":
 		if err := need("pod", a.Pod, safeName); err != nil {
 			return "", err
 		}
-		cmd = kubectl + " logs -n corelight-sensor " + host.Quote(a.Pod)
+		ns := a.Namespace
+		if ns == "" {
+			ns = "corelight-sensor"
+		}
+		if ns != "corelight-sensor" && ns != "kube-system" {
+			return "", fmt.Errorf("namespace %q: only corelight-sensor or kube-system", ns)
+		}
+		cmd = kubectl + " logs -n " + ns + " " + host.Quote(a.Pod)
 		if a.Container != "" {
 			cmd += " -c " + host.Quote(a.Container)
 		}
-		cmd += fmt.Sprintf(" --tail %d", n) + filter + tail
+		cmd += fmt.Sprintf(" --tail %d", fetch) + filter + tail
 	case "system_logs":
 		cmd = "ls -la /system-logs"
 	case "system_log":

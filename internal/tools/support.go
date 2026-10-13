@@ -207,7 +207,7 @@ func registerSupportAccess(s *mcp.Server, d *Deps) {
 				out["next"] = "Tell the user why this route cannot be used; nothing was changed."
 			} else {
 				out["confirm_token"] = token
-				out["next"] = fmt.Sprintf("Show the user the change (turn the remote interface %s on %s, via %s; the Device UID and the warnings). After they approve, call fm_sensor_support_access again with the same arguments plus confirm_token.", a.State, name, method)
+				out["next"] = fmt.Sprintf("Show the user the change (the remote interface on %s goes %s, via the %s route), the Device UID and the warnings. After they approve, call fm_sensor_support_access again with the same arguments plus confirm_token.", name, a.State, method)
 			}
 			r, err := jsonResult(out)
 			return r, nil, err

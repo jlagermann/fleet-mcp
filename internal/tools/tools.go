@@ -185,6 +185,7 @@ func Register(s *mcp.Server, d *Deps) {
 				registerSensorWrite(s, d)
 				registerSensorKeyWrite(s, d)
 				registerSensorAction(s, d)
+				registerSupportAccess(s, d)
 			}
 		}
 	}

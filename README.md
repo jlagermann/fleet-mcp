@@ -10,11 +10,11 @@ AI agents use three different kinds of help. fleet-mcp provides tools and instru
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **33 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **34 tools** |
 | **Skill** | A packaged set of instructions (a `SKILL.md`, sometimes with scripts) that the agent loads when a task matches. A skill adds no abilities; it guides how the agent uses the tools it has, for example a step-by-step migration playbook or site conventions. | the agent, by reading it | **none** (you can write your own on top of these tools) |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects, such as "show the install checklist first" or "get the user's approval after a preview". They work like a small skill that is always loaded. | the agent, by reading it | built in |
 
-The 33 tools:
+The 34 tools:
 
 | Group | Count | Tools |
 |---|---|---|
@@ -22,7 +22,7 @@ The 33 tools:
 | Fleet Manager reads | 17 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_sensor_diagnose`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
-| Changes (only with writes enabled; preview, then confirm) | 9 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action` |
+| Changes (only with writes enabled; preview, then confirm) | 10 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -347,6 +347,17 @@ Two read-only tools, used in this order, and one that acts on the sensor:
 The preview shows the sensor's update state (`updates updating`, `updates list`) and, for `reboot` and `revert_update`, a `--dry-run` of the command (`corelight-client` words a dry run like a real one; nothing happens). It refuses while an update is in progress. After one confirmation the action runs and is written to the audit log; follow the deploy with `fm_sensor_shell` check `deploy`. Factory reset, shutdown, flush-data and `corelightctl sensor stop` are never offered. Fleet Manager's own update trigger only pushes policy; it never upgrades software.
 What `diag-shell` is: an unprivileged bash inside a firejail sandbox. It can read `/system-logs`, and through `sudo` run `corelightctl sensor status`, `version`, `sensor logs`, `images`, `datastore` and `certificates`, and `kubectl logs`. It cannot list pods or processes, or run `ps`, `top`, `free` or `awk`, and it has no root; root on a sensor needs a Corelight Support escalation. `sudo` also allows `corelightctl sensor stop`; no check uses it.
 
+
+### Give Corelight Support remote access
+
+`fm_sensor_support_access` turns the sensor's "Enable Corelight remote interface" (`remote.management`) on or off. Support also needs the sensor's **Device UID**, which the preview shows. The remote interface needs Corelight Cloud Services (`remote.enable`) on. Turn it on only when Support asks, and off when they are done.
+
+Two routes:
+
+- **fleet** sets a per-sensor exception through Fleet Manager (`PUT /fleet/v1/sensor/instance/{uid}/api/configuration`; turning it off removes the exception). Refused on read-only Fleet Managers.
+- **sensor** runs `corelight-client configuration update --remote.management true|false` on the sensor as `diag-shell`. Use it when a change through Fleet Manager would not get through: a large policy change or several changes are queued for the sensor, the last configuration apply did not succeed, or the sensor is not connected. Fleet Manager may then show the setting as a difference, and a later policy apply can set it back.
+
+`auto` (the default) picks **fleet** when nothing stands in its way and **sensor** otherwise, and the preview says why. In the worst cases neither works and the sensor has to be removed from Fleet Manager before the remote interface can be turned on; fleet-mcp leaves that to you.
 ## Configuration
 
 Settings come from environment variables.
@@ -415,6 +426,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
 | `fm_sensor_move` | Move a sensor to another Fleet Manager over SSH as diag-shell (writes enabled; preview, then confirm) |
 | `fm_sensor_action` | Reboot a sensor, apply its pending updates, or revert its last update, over SSH as diag-shell (writes enabled; preview, then confirm) |
+| `fm_sensor_support_access` | Turn "Enable Corelight remote interface" (`remote.management`) on or off for Corelight Support, through Fleet Manager or directly on the sensor; shows the Device UID (writes enabled; preview, then confirm) |
 | `fm_sensor_ssh_key` | Install fleet-mcp's SSH key on a sensor (its individual setting `security.user.admin.ssh_public_key`) so moves need no password (writes enabled; preview, then confirm) |
 
 ### Changes need two calls

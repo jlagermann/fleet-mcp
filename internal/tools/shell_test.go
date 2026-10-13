@@ -35,7 +35,7 @@ func TestShellCommand(t *testing.T) {
 		t.Errorf("status: %s", cmd)
 	}
 	cmd, _ = shellCommand(ok["deploy"])
-	if !strings.Contains(cmd, `running command \"sensor deploy\"`) || !strings.Contains(cmd, "tail -n 60") || !strings.Contains(cmd, "sensor deploy success") {
+	if !strings.Contains(cmd, `running command \"sensor deploy\"`) || !strings.Contains(cmd, "tail -n 60") || !strings.Contains(cmd, "sensor deploy success") || !strings.Contains(cmd, "no deploy necessary") {
 		t.Errorf("deploy: %s", cmd)
 	}
 	cmd, _ = shellCommand(ok["node"])

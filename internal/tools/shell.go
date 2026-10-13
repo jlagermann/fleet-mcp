@@ -128,6 +128,7 @@ func shellCommand(a shellArgs) (string, error) {
 			`if [ -z "$id" ]; then echo 'no deploy run in corelightctl.log (it may have rotated: use check upgrade with file)'; else ` +
 			`printf 'run %s started: ' "$id"; ` + run + ` | head -n 1 | cut -c1-15; ` +
 			`if ` + run + ` | grep -q -F 'sensor deploy success'; then echo 'result: deploy succeeded'; ` +
+			`elif ` + run + ` | grep -q -F 'no deploy necessary'; then echo 'result: nothing to deploy (smart deploy found everything current; use check upgrade for the last real deploy)'; ` +
 			`elif ` + run + ` | grep -q -E 'level="(error|fatal)"'; then echo 'result: errors logged (the deploy failed or is retrying)'; ` +
 			`else echo 'result: still running'; fi; ` +
 			run + ` | grep -E 'level="(info|warning|error|fatal)"' | grep -v -F` + quoteEach(upgradeNoise) + filter + tail + `; fi`

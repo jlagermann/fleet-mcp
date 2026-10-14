@@ -62,7 +62,7 @@ func registerHost(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_install_checklist",
-		Description: "Everything a user must provide or decide before installing Fleet Manager (host access and resources, the Corelight repository token and product identity certificate, optional community string and Software Sensor license, version, agent user name, address), each with its current status and how to provide it. " +
+		Description: guideFirst("install-fleet-manager") + "Everything a user must provide or decide before installing Fleet Manager (host access and resources, the Corelight repository token and product identity certificate, optional community string and Software Sensor license, version, agent user name, address), each with its current status and how to provide it. " +
 			"Call this first whenever the user wants to install Fleet Manager, and show the returned markdown to the user. Read-only; values of secrets are never returned.",
 		Annotations: &mcp.ToolAnnotations{Title: "Install checklist", ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: &f},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a checklistArgs) (*mcp.CallToolResult, any, error) {
@@ -171,7 +171,7 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_host_install",
-		Description: "Install and set up Fleet Manager on an Ubuntu 22.04/24.04 host over SSH, following the Corelight installation guide: repository key, source and token, the corelight-fleet package, the product identity certificate, corelight-fleetd.conf (sensor community-string: the user's own if set with fleet-mcp secret set community-string -host <host>, otherwise generated; optional expose-swagger), the service, a local admin user for fleet-mcp (password generated and kept only by fleet-mcp), and the \"admin\" user. The admin's temporary password is returned in admin_temporary_password: give it to the user, who must change it at first login; fleet-mcp does not keep it. An existing admin is never changed. " +
+		Description: guideFirst("install-fleet-manager") + "Install and set up Fleet Manager on an Ubuntu 22.04/24.04 host over SSH, following the Corelight installation guide: repository key, source and token, the corelight-fleet package, the product identity certificate, corelight-fleetd.conf (sensor community-string: the user's own if set with fleet-mcp secret set community-string -host <host>, otherwise generated; optional expose-swagger), the service, a local admin user for fleet-mcp (password generated and kept only by fleet-mcp), and the \"admin\" user. The admin's temporary password is returned in admin_temporary_password: give it to the user, who must change it at first login; fleet-mcp does not keep it. An existing admin is never changed. " +
 			"Needs the repo-token and identity-cert.pem secrets (see fm_secrets_status) and passwordless sudo. Generated secrets are stored locally, never returned. " +
 			"Every step checks first and is skipped when already done, so a failed install can be re-run. " +
 			"Two steps: call without confirm_token for a preview of each step's state; after the user approves, call again with the same arguments plus confirm_token. Run fm_host_check first.",

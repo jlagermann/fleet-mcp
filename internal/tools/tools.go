@@ -11,6 +11,7 @@ import (
 
 	"github.com/jlagermann/fleet-mcp/internal/audit"
 	"github.com/jlagermann/fleet-mcp/internal/fleets"
+	"github.com/jlagermann/fleet-mcp/internal/guides"
 	"github.com/jlagermann/fleet-mcp/internal/jsonview"
 	"github.com/jlagermann/fleet-mcp/internal/redact"
 	"github.com/jlagermann/fleet-mcp/internal/secrets"
@@ -75,31 +76,41 @@ func (d *Deps) maxBytes(requested int) int {
 }
 
 // Instructions returns the text sent to MCP clients at initialization.
+// Clients truncate it (Claude Code at 4096 bytes), so it holds only what
+// applies to every call, safety rules first; workflows are in the guides
+// (fm_guide and the MCP prompts).
 func Instructions(writes bool) string {
-	s := instructions + migrateInstructions + newPolicyInstructions + hostInstructions +
-		"\n- fleet-mcp may not be on the user's PATH. Whenever you tell the user to run a fleet-mcp command in a terminal, give it with the full path, as tool results do: " + secrets.Command("secret", "set", "<name>")
+	var b strings.Builder
+	b.WriteString("fleet-mcp installs and manages Corelight Fleet Managers (FM).\n\nRules:\n")
 	if writes {
-		return s + writeInstructions
+		b.WriteString(writeInstructions)
+	} else {
+		b.WriteString("- This server is read-only (writes are not enabled).\n")
 	}
-	return s + "\n- This server is read-only (writes are not enabled)."
+	b.WriteString(rules)
+	b.WriteString("- fleet-mcp may not be on the user's PATH: give every fleet-mcp terminal command with its full path, as tool results do: " + secrets.Command("secret", "set", "<name>") + "\n")
+	b.WriteString("\nGuides: before a multi-step task, call fm_guide with its topic and follow it:\n")
+	for _, g := range guides.All() {
+		b.WriteString("- " + g.Name + ": " + g.When + "\n")
+	}
+	b.WriteString(usage)
+	return b.String()
 }
 
-const hostInstructions = `
-- Installing Fleet Manager: when the user wants to install, first call fm_install_checklist (with the host if known) and show its markdown checklist to the user; work through the missing items with them before fm_host_install. The user supplies their own Corelight repository token and product identity certificate: tokens at a hidden terminal prompt (fleet-mcp secret set repo-token) and files with fm_secret_import_file. Never ask for tokens or passwords in the chat. Then fm_host_install (preview, approval, confirm).`
+const writeInstructions = `- Changes take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send it without that approval; preview again if anything in the request changes. Executed changes are audited.
+`
 
-const writeInstructions = `
-- Changes (fm_api_write, fm_graphql_mutate) take two calls. The first returns a preview and a confirm_token and changes nothing. Show the preview to the user and get explicit approval before the second call, which repeats the identical request with confirm_token. Never send the confirming call without that approval, and preview again if anything in the request changes.
-- Executed changes are recorded in an audit log.`
+const rules = `- Never ask for passwords, tokens or keys in the chat. The user types them at a hidden terminal prompt (fleet-mcp secret set ...) or in the Fleet Manager web interface. Results have secrets replaced with "[REDACTED]".
+- One server can reach several Fleet Managers: fm_fleets lists them, and every FM tool takes an optional fleet argument. Always say which Fleet Manager a result came from, and name it in every change you propose. Fleet Managers marked read_only refuse changes.
+- Fleet Manager has sensor policies and Suricata policies. When the user asks about "a policy" without saying which, ask which kind first.
+`
 
-const instructions = `fleet-mcp installs and manages Corelight Fleet Managers (FM).
-
-- One server can reach several Fleet Managers. Call fm_fleets to list them; every FM tool takes an optional fleet argument (the name from fm_fleets) and otherwise uses the default. Always say which Fleet Manager a result came from, and name it in every change you propose. Fleet Managers marked read_only refuse changes.
-- Use fm_info to see an FM's version, the logged-in user and whether the API schemas are available.
-- Named tools (fm_sensors_list, fm_groups_list, fm_policies_list, ...) return compact summaries. Use the matching *_get tool or fm_api_get for full records.
-- Troubleshooting a sensor: start with fm_sensor_diagnose (one call, from Fleet Manager), then fm_sensor_shell for logs and state on the sensor itself (read-only fixed checks as diag-shell, which has no root). Compare with healthy sensors on the same policy before concluding a cause. When writes are enabled, fm_sensor_action reboots a sensor (at boot it reruns its NGS deploy, the first thing to try when an NGS upgrade failed on a job timeout), applies pending software updates, or reverts the last update (only when the user asks for a revert); follow a deploy with fm_sensor_shell check deploy. Fleet Manager's update trigger only pushes policy, it never upgrades software.
-- fm_api_get reaches any REST GET endpoint; fm_graphql_query runs GraphQL queries (mutations are rejected). Use fm_api_describe to find endpoints, parameters and GraphQL fields.
-- Large results: narrow them with select (a JSON Pointer such as "/list/0"; keys may contain dots, e.g. "/health.status"), fields (pointers kept per item), offset/limit, and max_bytes.
-- Secrets (passwords, tokens, keys, license codes in feed URLs) are replaced with "[REDACTED]" before results are returned.`
+const usage = `
+Tools:
+- Named tools (fm_sensors_list, fm_policies_list, ...) return compact summaries; use the matching *_get tool or fm_api_get for full records. Narrow large results with select (a JSON Pointer; keys may contain dots, e.g. "/health.status"), fields, offset/limit and max_bytes.
+- fm_api_get reaches any REST GET endpoint and fm_graphql_query any GraphQL query; fm_api_describe finds endpoints, parameters and fields. fm_info shows an FM's version, user and schema availability.
+- Fleet Manager's update trigger only pushes policy; it never upgrades sensor software.
+`
 
 // viewArgs are the output-shaping arguments shared by many tools.
 type viewArgs struct {
@@ -155,6 +166,7 @@ func readOnly(title string) *mcp.ToolAnnotations {
 
 // Register adds every tool to s.
 func Register(s *mcp.Server, d *Deps) {
+	registerGuides(s)
 	if d.Fleets != nil {
 		registerFleets(s, d)
 		registerRead(s, d)

@@ -66,7 +66,7 @@ func registerSensorAction(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_action",
-		Description: "Run one fixed action on a sensor itself, over SSH as diag-shell through corelight-client: reboot (reboot the sensor; at boot it reruns its NGS deploy, the usual fix for an NGS upgrade that failed on a job timeout), apply_updates (apply pending software updates now; refused when none are pending) or revert_update (go back to the state before the last software update; only when the user asks for it by name). " +
+		Description: guideFirst("troubleshoot-sensor") + "Run one fixed action on a sensor itself, over SSH as diag-shell through corelight-client: reboot (reboot the sensor; at boot it reruns its NGS deploy, the usual fix for an NGS upgrade that failed on a job timeout), apply_updates (apply pending software updates now; refused when none are pending) or revert_update (go back to the state before the last software update; only when the user asks for it by name). " +
 			"Fleet Manager's own update trigger only pushes policy; it never upgrades software. Nothing else can be run: no factory reset, shutdown, flush-data or service stop. Use fm_sensor_diagnose and fm_sensor_shell first. " +
 			"Two steps: call without confirm_token for a preview (the sensor's update state and, for reboot and revert_update, a --dry-run of the command); after the user approves, call again with the same arguments plus confirm_token. Afterwards follow the deploy with fm_sensor_shell check deploy every few minutes (the sensor does not answer SSH for the first minutes after a reboot).",
 		Annotations: &mcp.ToolAnnotations{Title: "Sensor action", DestructiveHint: &t, OpenWorldHint: &f},

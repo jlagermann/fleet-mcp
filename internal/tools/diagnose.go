@@ -69,7 +69,7 @@ func registerDiagnose(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_diagnose",
-		Description: "Diagnose sensors from what Fleet Manager knows, in one call: for each sensor that is not healthy (or the one named), the services that are not running with their messages, the reported versus deployed (NGS) version, the last software update, config apply errors and failed fields, exceptions, ended licenses, failed metrics and connection age, each compared with the other sensors on the same policy (does the same service fail there too?), plus findings and next steps. " +
+		Description: guideFirst("troubleshoot-sensor") + "Diagnose sensors from what Fleet Manager knows, in one call: for each sensor that is not healthy (or the one named), the services that are not running with their messages, the reported versus deployed (NGS) version, the last software update, config apply errors and failed fields, exceptions, ended licenses, failed metrics and connection age, each compared with the other sensors on the same policy (does the same service fail there too?), plus findings and next steps. " +
 			"Start here for any unhealthy sensor before fm_sensor_get. Fleet Manager has no sensor logs; for those use fm_sensor_shell.",
 		Annotations: readOnly("Diagnose sensors"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a diagArgs) (*mcp.CallToolResult, any, error) {

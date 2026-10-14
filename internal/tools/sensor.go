@@ -86,7 +86,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_move",
-		Description: "Move a sensor from one Fleet Manager (fleet) to another (target_fleet): fleet-mcp logs in to the sensor over SSH as diag-shell (password: the sensor-admin-password secret) and runs corelight-client configuration update in three steps: fleet.enable=false (so the current Fleet Manager cannot put its fleet.server_sslname back), then the target's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
+		Description: guideFirst("move-sensor") + "Move a sensor from one Fleet Manager (fleet) to another (target_fleet): fleet-mcp logs in to the sensor over SSH as diag-shell (password: the sensor-admin-password secret) and runs corelight-client configuration update in three steps: fleet.enable=false (so the current Fleet Manager cannot put its fleet.server_sslname back), then the target's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
 			"The sensor keeps its configuration: it appears on the target in the UNASSIGNED group and only takes a new configuration when it is put in a sensor group with a policy. Its entry on the source Fleet Manager goes offline. " +
 			"Two steps: call without confirm_token for a preview (sensor, addresses, SSH host key fingerprint, which secrets are present); after the user approves, call again with the same arguments plus confirm_token.",
 		Annotations: &mcp.ToolAnnotations{Title: "Move sensor", DestructiveHint: &t, OpenWorldHint: &f},

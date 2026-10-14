@@ -18,10 +18,6 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/migrate"
 )
 
-const migrateInstructions = `
-- Copying a sensor policy between Fleet Managers: fm_policy_copy exports the policy and everything it uses from one FM and previews the import into another; fm_policy_export and fm_policy_import do the two halves separately. Versions must match on major.minor. Secrets (exporter tokens, password settings, licensed feed URLs, connector credentials) are never copied: show the follow_up list so the user can enter them on the target. Sensor groups are not copied.
-- Exporters can only be migrated once the target FM has a sensor attached (FM lists no exporter types before that). The preview then asks, in plan.decisions, whether to continue without them: ask the user and never decide for them. A user who continues can add the exporters later, after attaching a sensor, with fm_policy_import, the same package and complete: true; fm_policy_packages shows imports still waiting for that.`
-
 type exportArgs struct {
 	target
 	Policy   string `json:"policy" jsonschema:"sensor policy ID or exact name on the source Fleet Manager"`
@@ -161,7 +157,7 @@ func registerMigrateWrite(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_policy_import",
-		Description: "Import a policy package (from fm_policy_export) into a Fleet Manager as a new sensor policy with new Suricata policy, YARA ruleset, collections and bundle. Never changes existing objects; identical file sources already on the target are reused. " +
+		Description: guideFirst("copy-sensor-policy") + "Import a policy package (from fm_policy_export) into a Fleet Manager as a new sensor policy with new Suricata policy, YARA ruleset, collections and bundle. Never changes existing objects; identical file sources already on the target are reused. " +
 			"The preview checks that Fleet Manager versions match on major.minor, that the target knows every setting and exporter type, and that no names clash. It also reports, for information, how many target sensors are licensed for the features the policy enables; sensors never block an import. " +
 			"Two steps: call without confirm_token for the preview; after the user approves, call again with the same arguments plus confirm_token. If a step fails, everything created is deleted again.",
 		Annotations: &mcp.ToolAnnotations{Title: "Import sensor policy", DestructiveHint: &f, OpenWorldHint: &f},
@@ -179,7 +175,7 @@ func registerMigrateWrite(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_policy_copy",
-		Description: "Copy a sensor policy and everything it uses from one Fleet Manager (source_fleet) to another (fleet). The first call exports the policy to a package and returns the import preview with the package name and a confirm_token; after the user approves, call again with the same arguments plus package and confirm_token. " +
+		Description: guideFirst("copy-sensor-policy") + "Copy a sensor policy and everything it uses from one Fleet Manager (source_fleet) to another (fleet). The first call exports the policy to a package and returns the import preview with the package name and a confirm_token; after the user approves, call again with the same arguments plus package and confirm_token. " +
 			"Same checks and secret handling as fm_policy_export and fm_policy_import.",
 		Annotations: &mcp.ToolAnnotations{Title: "Copy sensor policy", DestructiveHint: &f, OpenWorldHint: &t},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a copyArgs) (*mcp.CallToolResult, any, error) {

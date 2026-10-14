@@ -68,7 +68,7 @@ func registerSupportAccess(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_support_access",
-		Description: "Turn the sensor's \"Enable Corelight remote interface\" (remote.management) on or off, so Corelight Support can reach the sensor remotely; Support also needs the sensor's Device UID, which the preview shows. It needs Corelight Cloud Services (remote.enable) on. Turn it on only when Support asks and off again when they are done. " +
+		Description: guideFirst("troubleshoot-sensor") + "Turn the sensor's \"Enable Corelight remote interface\" (remote.management) on or off, so Corelight Support can reach the sensor remotely; Support also needs the sensor's Device UID, which the preview shows. It needs Corelight Cloud Services (remote.enable) on. Turn it on only when Support asks and off again when they are done. " +
 			"Two routes: fleet sets a per-sensor exception through Fleet Manager (refused on read-only Fleet Managers); sensor runs corelight-client configuration update on the sensor itself as diag-shell, which works when Fleet Manager has a large policy change or several changes queued for the sensor, or the sensor is unhealthy, and a change through Fleet Manager would not get through. auto (default) picks fleet when nothing stands in its way, else sensor. If neither works, the sensor may have to be removed from Fleet Manager first; tell the user, never do it. " +
 			"Two steps: call without confirm_token for a preview; after the user approves, call again with the same arguments plus confirm_token. The result reads the setting back from the sensor.",
 		Annotations: &mcp.ToolAnnotations{Title: "Corelight Support remote access", DestructiveHint: &f, OpenWorldHint: &t},

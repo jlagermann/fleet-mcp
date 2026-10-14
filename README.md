@@ -6,18 +6,22 @@ An [MCP](https://modelcontextprotocol.io) server for installing, configuring and
 
 ## Tools, skills and instructions
 
-AI agents use three different kinds of help. fleet-mcp provides tools and instructions; it does not include skills.
+AI agents use several kinds of help. fleet-mcp provides tools, server instructions, and workflow guides that work like skills but ship with the server.
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **34 tools** |
-| **Skill** | A packaged set of instructions (a `SKILL.md`, sometimes with scripts) that the agent loads when a task matches. A skill adds no abilities; it guides how the agent uses the tools it has, for example a step-by-step migration playbook or site conventions. | the agent, by reading it | **none** (you can write your own on top of these tools) |
-| **Server instructions** | Short guidance an MCP server sends when the agent connects, such as "show the install checklist first" or "get the user's approval after a preview". They work like a small skill that is always loaded. | the agent, by reading it | built in |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **35 tools** |
+| **Server instructions** | Short guidance an MCP server sends when the agent connects. Clients truncate long instructions (Claude Code at 4,096 bytes), so fleet-mcp's hold only the rules for every call: approval after a preview, no secrets in the chat, naming the Fleet Manager, and which guide to load for which task. | the agent, by reading it | built in, about 2.4 KB |
+| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/mcp__fleet-mcp__<guide>`). | the agent, by reading it | **7 guides**, each also a prompt |
+| **Skill** | A packaged set of instructions (a `SKILL.md`) installed in the agent itself. | the agent, by reading it | none needed; you can write your own on top of these tools |
 
-The 34 tools:
+The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `move-sensor`. Each prompt takes an optional `request` argument, your task in your own words.
+
+The 35 tools:
 
 | Group | Count | Tools |
 |---|---|---|
+| Guides (always available) | 1 | `fm_guide` |
 | Install and secrets (always available) | 4 | `fm_install_checklist`, `fm_host_check`, `fm_secrets_status`, `fm_secret_import_file` |
 | Fleet Manager reads | 17 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_sensor_diagnose`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
@@ -387,10 +391,11 @@ Settings come from environment variables.
 
 ## Tools
 
-Host and secret tools (always available):
+Always available:
 
 | Tool | Description |
 |---|---|
+| `fm_guide` | A step-by-step guide for a multi-step task (without `topic`, lists the guides); the same guides are MCP prompts |
 | `fm_install_checklist` | Everything you provide or decide before an install, with status |
 | `fm_host_check` | Read-only readiness check of a host |
 | `fm_secrets_status` | Which secrets are stored (never values) and how to add missing ones |
@@ -431,7 +436,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 

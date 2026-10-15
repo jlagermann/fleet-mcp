@@ -175,6 +175,7 @@ func Register(s *mcp.Server, d *Deps) {
 		registerNewPolicy(s, d)
 		if d.EnableWrites {
 			registerWrite(s, d)
+			registerContentWrite(s, d)
 			if d.Secrets != nil {
 				registerNewPolicyWrite(s, d)
 			}

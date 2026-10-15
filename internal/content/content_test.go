@@ -1,0 +1,300 @@
+package content_test
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jlagermann/fleet-mcp/internal/content"
+)
+
+func writeFile(t *testing.T, name string, b []byte) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func preview(t *testing.T, p *content.Plan) string {
+	t.Helper()
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(p)
+	return buf.String()
+}
+
+const intelV1 = "#fields\tindicator\tindicator_type\tmeta.source\n1.2.3.4\tIntel::ADDR\ta\nevil.example\tIntel::DOMAIN\ta\n"
+const intelV2 = "#fields\tindicator\tindicator_type\tmeta.source\n1.2.3.4\tIntel::ADDR\ta\n5.6.7.8\tIntel::ADDR\tb\n"
+
+func TestIntelCreateAndLink(t *testing.T) {
+	fm := newFake(t)
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge", "description": "d", "packages.enabled": map[string]any{"x": true}, "configuration": map[string]any{"a": 1}}
+	ctx := context.Background()
+	req := content.Request{Kind: content.Intel, File: writeFile(t, "intel.dat", []byte(intelV1)), Policy: "Edge"}
+	p, err := content.Prepare(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	if !p.Ready() || p.Target.Exists || !strings.Contains(out, `create intel file source \"fleet-mcp\"`) ||
+		!strings.Contains(out, `create intel collection \"Edge\"`) || !strings.Contains(out, `"indicators":2`) {
+		t.Fatalf("plan: %s", out)
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	if len(res.Verification) > 0 {
+		t.Fatalf("verification: %v", res.Verification)
+	}
+	pol := fm.policies[1]
+	if content := pol["intelCollectionID"]; content == nil || pol["name"] != "Edge" || pol["configuration"].(map[string]any)["a"] != float64(1) && pol["configuration"].(map[string]any)["a"] != 1 {
+		t.Fatalf("policy after: %v", pol)
+	}
+
+	// The same file again: nothing to do.
+	p, err = content.Prepare(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Unchanged || p.Ready() {
+		t.Fatalf("same file should be unchanged: %s", preview(t, p))
+	}
+
+	// A new version updates the source in place and shows the diff.
+	req.File = writeFile(t, "intel.dat", []byte(intelV2))
+	p, err = content.Prepare(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = preview(t, p)
+	if !p.Ready() || !p.Target.Exists || !strings.Contains(out, "5.6.7.8 Intel::ADDR") || !strings.Contains(out, "evil.example Intel::DOMAIN") ||
+		!strings.Contains(out, "already in intel collection") {
+		t.Fatalf("update plan: %s", out)
+	}
+	if res, err = content.Apply(ctx, fm.client, p); err != nil || len(res.Verification) > 0 {
+		t.Fatalf("update: %v %v", err, res)
+	}
+	if n := len(fm.sources); n != 1 {
+		t.Fatalf("%d sources, want 1", n)
+	}
+}
+
+func TestIntelWithoutHeaderIsBlocked(t *testing.T) {
+	fm := newFake(t)
+	p, err := content.Prepare(context.Background(), fm.client, content.Request{Kind: content.Intel, File: writeFile(t, "i.dat", []byte("1.2.3.4\tIntel::ADDR\ta\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() || !strings.Contains(preview(t, p), "#fields") {
+		t.Fatalf("plan: %s", preview(t, p))
+	}
+}
+
+func TestInputManagedByCorelightUpdateAndReaders(t *testing.T) {
+	fm := newFake(t)
+	old := fm.addFile([]byte("#fields\thost\nold\n"))
+	fm.sources[5] = map[string]any{"id": "5", "alias": "defaultPolicy_hosts.tsv", "name": "hosts.tsv", "type": "INPUT", "enabled": true,
+		"description": "Created by Corelight Update", "fileId": old}
+	fm.sensors = []any{map[string]any{"fleet.connected": true, "bro.inputs": []any{map[string]any{"name": "hosts.tsv", "package": "customer:endpoint"}}}}
+	p, err := content.Prepare(context.Background(), fm.client, content.Request{Kind: content.Input,
+		File: writeFile(t, "hosts.tsv", []byte("#fields\thost\nnew\n")), Source: "defaultPolicy_hosts.tsv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	if !p.Ready() || p.Target.ManagedBy != "Corelight-update" || !strings.Contains(out, "next push overwrites") ||
+		!strings.Contains(out, "read by: customer:endpoint") || !strings.Contains(out, "no sensor policy uses") {
+		t.Fatalf("plan: %s", out)
+	}
+}
+
+func TestRollbackOnLinkFailure(t *testing.T) {
+	fm := newFake(t)
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge"}
+	fm.failOn = "associateFileCollectionToSources"
+	ctx := context.Background()
+	p, err := content.Prepare(ctx, fm.client, content.Request{Kind: content.Intel, File: writeFile(t, "intel.dat", []byte(intelV1)), Policy: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err == nil {
+		t.Fatal("apply should fail")
+	}
+	if len(fm.deleted) != 2 || len(res.RolledBack) != 2 || fm.policies[1]["intelCollectionID"] != nil {
+		t.Fatalf("rollback: deleted %v, result %v, policy %v", fm.deleted, res.RolledBack, fm.policies[1])
+	}
+}
+
+const rulesOld = `alert tcp any any -> any any (msg:"a"; sid:1; rev:1;)
+alert tcp any any -> any any (msg:"b"; sid:2; rev:1;)
+# alert tcp any any -> any any (msg:"c"; sid:3; rev:1;)
+`
+const rulesNew = `alert tcp any any -> any any (msg:"a"; sid:1; rev:2;)
+alert tcp any any -> any any (msg:"c"; sid:3; rev:1;)
+alert tcp any any -> any any (msg:"d"; sid:4; rev:1;)
+`
+
+func TestSuricataRulesAutomation(t *testing.T) {
+	fm := newFake(t)
+	old := fm.addFile([]byte(rulesOld))
+	fm.suricata[7] = map[string]any{"id": 7, "name": "Lab", "rulesAutomation": true, "sources": []any{
+		map[string]any{"id": 11, "name": "ET Pro", "entityType": "url", "enabled": true, "url": "https://rules.example/secret/x.tar.gz"},
+		map[string]any{"id": 12, "name": "Corelight-update", "entityType": "file", "enabled": true, "fileId": old, "created_by": "Corelight-update"},
+	}}
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge", "suricataPolicyID": 7}
+	ctx := context.Background()
+	p, err := content.Prepare(ctx, fm.client, content.Request{Kind: content.SuricataRules, File: writeFile(t, "suricata.rules", []byte(rulesNew)),
+		Policy: "Edge", Source: "Corelight-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	for _, want := range []string{`"added_sids":{"count":1,"sample":["4"]}`, `"removed_sids":{"count":1,"sample":["2"]}`,
+		`"changed_sids":{"count":1,"sample":["1"]}`, `"newly_enabled_sids":{"count":1,"sample":["3"]}`, `"by":"Fleet Manager"`, "Corelight-update", `"used_by_sensor_policies":["Edge (1)"]`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %s: %s", want, out)
+		}
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	srcs := fm.suricata[7]["sources"].([]any)
+	if len(srcs) != 2 || srcs[0].(map[string]any)["url"] != "https://rules.example/secret/x.tar.gz" ||
+		int64(srcs[1].(map[string]any)["fileId"].(float64)) != res.FileID {
+		t.Fatalf("sources after: %v", srcs)
+	}
+}
+
+func TestSuricataYAMLNeedsHeader(t *testing.T) {
+	fm := newFake(t)
+	fm.suricata[7] = map[string]any{"id": 7, "name": "Lab"}
+	p, err := content.Prepare(context.Background(), fm.client, content.Request{Kind: content.SuricataYAML,
+		File: writeFile(t, "suricata.yaml", []byte("vars:\n  address-groups: {}\n")), SuricataPolicy: "Lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() || !strings.Contains(preview(t, p), "%YAML 1.1") {
+		t.Fatalf("plan: %s", preview(t, p))
+	}
+}
+
+func bundleFile(t *testing.T, manifest string, revs map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	add := func(name, body string) {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(body))
+	}
+	add("./manifest.txt", manifest)
+	// One package on a branch, the others detached; .git/shallow lists
+	// other commits first, as real shallow clones do.
+	for dir, rev := range revs {
+		add("./"+dir+"/.git/shallow", "ffffffffffff\n"+rev+"\n")
+		if dir == "ExtendIntel" {
+			add("./"+dir+"/.git/HEAD", "ref: refs/heads/main\n")
+			add("./"+dir+"/.git/refs/heads/main", rev+"\n")
+		} else {
+			add("./"+dir+"/.git/HEAD", rev+"\n")
+		}
+		add("./"+dir+"/zkg.meta", "[package]\n")
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+func TestBundle(t *testing.T) {
+	fm := newFake(t)
+	fm.bundles[50] = map[string]any{"id": 50, "name": "old", "description": "Package created and managed by Corelight-update", "info": map[string]any{"packages": map[string]any{
+		"https:github.com:corelight:ExtendIntel": map[string]any{"version": "v4.0", "revision": "aaaa"},
+		":home:u:gone":                           map[string]any{"version": "main", "revision": "bbbb"},
+	}}}
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge", "bundle.id": 50, "description": "",
+		"packages.enabled": map[string]any{"https:github.com:corelight:ExtendIntel": true, ":home:u:gone": true}}
+	b := bundleFile(t, "[bundle]\nhttps://github.com/corelight/ExtendIntel = v4.1\n/home/u/new = main\n",
+		map[string]string{"ExtendIntel": "cccc", "new": "dddd"})
+	ctx := context.Background()
+	p, err := content.Prepare(ctx, fm.client, content.Request{Kind: content.Bundle, File: writeFile(t, "corelight.bundle", b), Policy: "Edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	for _, want := range []string{`:home:u:new = main`, `v4.0 aaaa -> v4.1 cccc`, `"removed":[":home:u:gone"]`,
+		"arrive disabled", "is enabled in the policy but is not in the new bundle"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %s: %s", want, out)
+		}
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	if got := fm.policies[1]; int64(got["bundle.id"].(float64)) != res.BundleID || got["packages.enabled"].(map[string]any)[":home:u:gone"] != true {
+		t.Fatalf("policy after: %v", got)
+	}
+}
+
+func TestBundleWithoutManifestIsBlocked(t *testing.T) {
+	fm := newFake(t)
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge"}
+	p, err := content.Prepare(context.Background(), fm.client, content.Request{Kind: content.Bundle, File: writeFile(t, "x.bundle", []byte("not gzip")), Policy: "Edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() {
+		t.Fatalf("plan: %s", preview(t, p))
+	}
+}
+
+func TestYaraCreateLinkAndValidate(t *testing.T) {
+	fm := newFake(t)
+	fm.policies[1] = map[string]any{"id": 1, "name": "Edge"}
+	ctx := context.Background()
+	p, err := content.Prepare(ctx, fm.client, content.Request{Kind: content.Yara, File: writeFile(t, "r.yar", []byte("rule a { condition: true }\nprivate rule b { condition: false }\n")), Policy: "Edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := preview(t, p); !p.Ready() || !strings.Contains(out, `"rules":2`) || !strings.Contains(out, `"valid":true`) {
+		t.Fatalf("plan: %s", out)
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	if fm.policies[1]["yaraRulesetID"] == nil {
+		t.Fatalf("policy not linked: %v", fm.policies[1])
+	}
+
+	p, err = content.Prepare(ctx, fm.client, content.Request{Kind: content.Yara, File: writeFile(t, "bad.yar", []byte("rule c { strings: $a = \"x\" }\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() {
+		t.Fatalf("invalid YARA should block: %s", preview(t, p))
+	}
+}
+
+func TestPackageKey(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://github.com/corelight/ExtendIntel": "https:github.com:corelight:ExtendIntel",
+		"/home/user/zeek-packages/dns-bypass":      ":home:user:zeek-packages:dns-bypass",
+	} {
+		if got := content.PackageKey(in); got != want {
+			t.Errorf("PackageKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

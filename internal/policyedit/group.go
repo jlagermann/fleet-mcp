@@ -127,6 +127,9 @@ func PrepareGroup(ctx context.Context, api API, req GroupRequest) (*GroupPlan, e
 			}
 			return nil, fmt.Errorf("no sensor group %q; groups: %s", req.Group, strings.Join(names, ", "))
 		}
+		if cur.ID == 0 {
+			return nil, fmt.Errorf("%s is Fleet Manager's built-in group for unassigned sensors and cannot be changed; take sensors out of a group with remove_sensors", cur.Name)
+		}
 		p.Group = Ref{ID: cur.ID, Name: cur.Name}
 	default:
 		return nil, fmt.Errorf("action must be create, update or delete")

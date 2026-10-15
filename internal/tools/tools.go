@@ -170,6 +170,8 @@ func Register(s *mcp.Server, d *Deps) {
 	registerHostDiag(s, d)
 	if d.Fleets != nil {
 		registerFleets(s, d)
+		registerFleetHealth(s, d)
+		registerPolicyDiff(s, d)
 		registerRead(s, d)
 		registerDiagnose(s, d)
 		registerGeneric(s, d)

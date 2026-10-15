@@ -10,20 +10,20 @@ AI agents use several kinds of help. fleet-mcp provides tools, server instructio
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **42 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **44 tools** |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects. Clients truncate long instructions (Claude Code at 4,096 bytes), so fleet-mcp's hold only the rules for every call: approval after a preview, no secrets in the chat, naming the Fleet Manager, and which guide to load for which task. | the agent, by reading it | built in, about 2.4 KB |
 | **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **10 guides**, each also a prompt |
 | **Skill** | A packaged set of instructions (a `SKILL.md`) installed in the agent itself. | the agent, by reading it | none needed; you can write your own on top of these tools |
 
 The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`. Each prompt takes an optional `request` argument, your task in your own words.
 
-The 42 tools:
+The 44 tools:
 
 | Group | Count | Tools |
 |---|---|---|
 | Guides (always available) | 1 | `fm_guide` |
 | Install, host health and secrets (always available) | 5 | `fm_install_checklist`, `fm_host_check`, `fm_host_diagnose`, `fm_secrets_status`, `fm_secret_import_file` |
-| Fleet Manager reads | 17 | `fm_fleets`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_sensor_diagnose`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
+| Fleet Manager reads | 19 | `fm_fleets`, `fm_fleet_health`, `fm_policy_diff`, `fm_info`, `fm_sensors_list`, `fm_sensor_get`, `fm_sensor_diagnose`, `fm_groups_list`, `fm_policies_list`, `fm_policy_get`, `fm_suricata_policies_list`, `fm_suricata_policy_get`, `fm_sensor_updates_status`, `fm_notifications`, `fm_backups`, `fm_api_get`, `fm_graphql_query`, `fm_api_describe`, `fm_policy_profiles` |
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
 | Suricata ruleset test (read-only, over SSH on a host you name) | 1 | `fm_suricata_test` |
@@ -37,6 +37,7 @@ Each tool is described in [Tools](#tools); the command-line companion is in [Com
 - **Fleet Manager API:** the REST API (`/fleet/v1/*`) and the GraphQL API (`/graph/query`): sensors, groups, tags, policies, Suricata, content resources, YARA, connectors, sensor updates, backups, users, roles and settings.
 - **Content:** push intel, input, YARA, Suricata rules and configuration, and Zeek package bundles as they are (`fm_content_push`).
 - **Fleet Manager host health:** a read-only check of a running host (`fm_host_diagnose`).
+- **Fleet-wide views:** health of every Fleet Manager at once (`fm_fleet_health`) and policy drift between policies or Fleet Managers (`fm_policy_diff`).
 - **Planned:** upgrades, `corelight-fleetd.conf` changes, licenses and TLS certificates on an existing host; read-only diagnostics of Fleet Manager's databases.
 
 Out of scope: the Corelight Sensor API, and scheduled content fetching.
@@ -492,6 +493,8 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | Tool | Description |
 |---|---|
 | `fm_fleets` | The Fleet Managers this server can manage; with `check`, reachability and versions |
+| `fm_fleet_health` | One overview of every Fleet Manager: reachability, version, sensors by health, disconnected and unhealthy sensors, failed config applies and services, license warnings, software versions, open notifications, automatic backups, with what needs attention |
+| `fm_policy_diff` | Compare two sensor policies on the same or different Fleet Managers: settings, bundle packages, linked objects by name, Suricata policies, YARA and collection sources by file hash |
 | `fm_info` | Fleet Manager version and features, the logged-in user, schema availability |
 | `fm_sensors_list` | One summary row per sensor: health, connection, version, group, policy, config-apply state |
 | `fm_sensor_get` | Full detail for one sensor (by uid or name) |

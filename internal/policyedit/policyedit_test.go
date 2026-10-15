@@ -195,3 +195,14 @@ func TestGroup(t *testing.T) {
 		t.Fatal("duplicate group name should block")
 	}
 }
+
+func TestUnassignedGroup(t *testing.T) {
+	fm := setup(t)
+	fm.groups[0] = map[string]any{"id": int64(0), "name": "UNASSIGNED"}
+	if _, err := policyedit.PrepareGroup(context.Background(), fm.client, policyedit.GroupRequest{Action: "delete", Group: "UNASSIGNED"}); err == nil || !strings.Contains(err.Error(), "built-in") {
+		t.Fatalf("UNASSIGNED must be refused: %v", err)
+	}
+	if p, err := policyedit.PrepareGroup(context.Background(), fm.client, policyedit.GroupRequest{Action: "create", Group: "UNASSIGNED"}); err != nil || p.Ready() {
+		t.Fatalf("creating a group named UNASSIGNED must be blocked: %v", err)
+	}
+}

@@ -10,3 +10,4 @@
 4. Secrets (exporter tokens, password settings, licensed feed URLs, connector credentials) are never copied with the policy. Show the follow_up list so the user can enter them on the target, never in the chat.
 5. Sensor groups are not copied.
 6. Get the user's approval of the preview, then call again with the same arguments plus `package` and `confirm_token`.
+7. Afterwards, `fm_policy_diff` (policy, fleet, compare_fleet) shows what still differs between the two Fleet Managers, for example the secrets that were not copied.

@@ -1,5 +1,7 @@
 # Troubleshoot a sensor
 
+For an overview of every Fleet Manager and which sensors need attention, use `fm_fleet_health`; for a Fleet Manager host itself, `fm_host_diagnose`.
+
 1. Start with `fm_sensor_diagnose`. It answers from Fleet Manager in one call: failed services and their messages, reported versus deployed (NGS) version, the last software update, config apply errors, exceptions and ended licenses, each compared with the other sensors on the same policy, plus findings and next steps.
 2. Then use `fm_sensor_shell` for what Fleet Manager cannot show. It runs fixed read-only checks over SSH as diag-shell, which has no root. Useful checks:
    - `status`, `version`

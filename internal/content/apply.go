@@ -75,6 +75,8 @@ func Apply(ctx context.Context, api API, p *Plan) (*Result, error) {
 		err = a.suricataRules(ctx)
 	case SuricataYAML, SuricataThreshold, SuricataClassification, SuricataReference:
 		err = a.suricataConfig(ctx)
+	case SuricataDisable, SuricataEnable, SuricataModify:
+		err = a.suricataModifier(ctx)
 	case Bundle:
 		err = a.bundle(ctx)
 	}
@@ -388,10 +390,14 @@ func (a *applier) verify(ctx context.Context) {
 				}
 			}
 		}
-	case SuricataRules, SuricataYAML, SuricataThreshold, SuricataClassification, SuricataReference:
+	case SuricataRules, SuricataYAML, SuricataThreshold, SuricataClassification, SuricataReference, SuricataDisable, SuricataEnable, SuricataModify:
 		var sp map[string]any
 		if err := a.api.GetJSON(ctx, fmt.Sprintf("%s/%d", pathSuricata, idOf(p.suricata["id"])), nil, &sp); err != nil {
 			bad("could not read the Suricata policy back: %v", err)
+			break
+		}
+		if modifierFile[p.Kind] != "" {
+			a.verifyModifier(ctx, sp, bad)
 			break
 		}
 		var got int64
@@ -409,6 +415,9 @@ func (a *applier) verify(ctx context.Context) {
 		}
 		if got != a.res.FileID {
 			bad("the Suricata policy points at file %d, not the uploaded file %d", got, a.res.FileID)
+		}
+		if p.suricata["rulesAutomation"] == true {
+			a.waitRuleset(ctx, bad)
 		}
 	}
 	if p.Policy != nil && p.policyBody != nil && (p.Kind == Bundle || p.link.needed) {

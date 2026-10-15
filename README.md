@@ -311,13 +311,14 @@ intel, then show me what importing it into lab would do, without the exporters.
 | `intel` | An intel file source (by alias, default `fleet-mcp`), updated in place or created. Sensors get it as `bro_intel.dat`. |
 | `input` | An input file source (by alias, default the file name). `name` is the file name on the sensors, which the Zeek package reading it looks for. |
 | `yara` | A YARA source (by name, default `fleet-mcp`), checked by Fleet Manager's YARA validation first. |
-| `suricata_rules` | With rules automation: a file rule source of the Suricata policy (by name, default `fleet-mcp`; the other sources are kept). Without: the policy's whole rule set. Fleet Manager validates the file first. |
+| `suricata_rules` | With rules automation: a file rule source of the Suricata policy (by name, default `fleet-mcp`; the other sources are kept). Without: the policy's whole rule set. Fleet Manager parses the file first (it does not run Suricata). |
 | `suricata_yaml`, `suricata_threshold`, `suricata_classification`, `suricata_reference` | That configuration file of the Suricata policy. A `suricata.yaml` snippet must start with `%YAML 1.1` and `---`. |
+| `suricata_disable`, `suricata_enable`, `suricata_modify` | The `disable.conf`, `enable.conf` or `modify.conf` of a Suricata policy with Suricata automation, set to "Use configuration files" (the push switches it if needed). fleet-mcp checks the syntax first: Fleet Manager rejects the whole file at upload for one bad line, and Corelight-update-only syntax (`MetadataAppend`, `Msg`/`GID`/`Rev` changes, regex rewrites) is not accepted. After the push, fleet-mcp waits for Fleet Manager to rebuild the ruleset and reports errors. |
 | `bundle` | A Zeek package bundle (from `zkg bundle`) as the sensor policy's bundle. The policy keeps its enabled packages. |
 
 The preview shows:
 - **A diff against what Fleet Manager has:** SIDs added, removed, changed, newly enabled or disabled; intel indicators or input records added and removed; YARA rules added and removed; bundle packages added, removed, or changed in version or git revision.
-- **Fleet Manager's validation** (Suricata rule counts, errors and duplicate SIDs; YARA syntax).
+- **Fleet Manager's validation** (Suricata rule counts, parse errors and duplicate SIDs; YARA syntax). Fleet Manager only parses Suricata rules, it does not run Suricata, so test a ruleset with Suricata yourself before it reaches the sensors.
 - **Who gets the change:** the sensor policies that use it.
 - **Notes and warnings**, for example:
   - the target is managed by Corelight-update or Fleet-client, which overwrite it if they still run;
@@ -326,6 +327,8 @@ The preview shows:
   - no connected sensor reads an input file.
 
 A file Fleet Manager already has is reported as unchanged. For intel, input and YARA, `policy` also adds the source to that sensor policy's collection or YARA ruleset, creating and linking one named after the policy if it has none. After the push, fleet-mcp reads everything back. If a step fails, objects the push created are deleted again.
+
+Moving Suricata tuning from Corelight-update? Fleet Manager's configuration files and flowbit dependencies differ from Corelight-update's in several ways: see [Moving Suricata tuning from Corelight-update to Fleet Manager](docs/corelight-update-migration.md).
 
 Sample prompts:
 

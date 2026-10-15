@@ -3,7 +3,7 @@
 `fm_content_push` pushes one local file as it is. It does not fetch feeds, merge files or rewrite rules; the user prepares the file.
 
 1. **What and where.** Settle with the user:
-   - the kind: `intel`, `input`, `yara`, `suricata_rules`, a Suricata configuration file (`suricata_yaml`, `suricata_threshold`, `suricata_classification`, `suricata_reference`) or `bundle`;
+   - the kind: `intel`, `input`, `yara`, `suricata_rules`, a Suricata configuration file (`suricata_yaml`, `suricata_threshold`, `suricata_classification`, `suricata_reference`), a Suricata tuning file (`suricata_disable`, `suricata_enable`, `suricata_modify`: the `disable.conf`, `enable.conf`, `modify.conf` of a policy with Suricata automation and "Use configuration files") or `bundle`;
    - the Fleet Manager;
    - the target:
      - intel and input: the source alias (an existing alias is updated in place);
@@ -21,7 +21,8 @@
 
    Point out in particular:
    - Objects managed by Corelight-update or Fleet-client are updated anyway. The note says that tool overwrites the change if it still runs.
-   - Rule errors and duplicate SIDs. Fleet Manager's validation checks the rules themselves. It can pass rules that still fail to load on the sensors, for example rules for a protocol the sensors' Suricata configuration disables.
+   - Rule errors and duplicate SIDs. Fleet Manager only parses the rules; it does not run Suricata, so it can pass rules that still fail to load on the sensors, for example rules for a protocol the sensors' Suricata configuration disables. A real test needs Suricata (`suricata -T`) with a configuration matching the sensors'.
+   - For tuning files: the syntax problems (Fleet Manager rejects the whole file for one bad line), the `Metadata:` warning, a switch from the rules manager to configuration files (rule modifiers made in the rules manager stop applying), and whether "Enable flowbit dependencies" is on. For users coming from Corelight-update, explain the differences in docs/corelight-update-migration.md of the fleet-mcp repository: no `MetadataAppend`, no `Msg`/`GID`/`Rev` changes, no regex rewrites, and a flowbit resolver that runs one pass, ignores isnotset, toggle, xbits and hostbits, adds no noalert and also enables setters that are not needed.
    - For bundles: new packages arrive disabled, and enabled packages missing from the new bundle stop loading.
    - For input files: whether the connected sensors report a package that reads the file.
 3. If the preview says nothing changed, tell the user and stop.

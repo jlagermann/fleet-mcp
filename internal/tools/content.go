@@ -21,9 +21,9 @@ func registerContentWrite(s *mcp.Server, d *Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_content_push",
 		Description: guideFirst("push-content") + "Push a local content file to Fleet Manager as it is: an intel or input file (file source, updated in place by alias), YARA rules (YARA source), " +
-			"a Suricata rules file (a rule source of a Suricata policy with rules automation, or its rule set), a Suricata configuration file (suricata.yaml snippet, threshold, classification or reference config) " +
+			"a Suricata rules file (a rule source of a Suricata policy with rules automation, or its rule set), a Suricata configuration file (suricata.yaml snippet, threshold, classification or reference config), a Suricata tuning file (disable.conf, enable.conf, modify.conf of a policy with automation and configuration files) " +
 			"or a Zeek package bundle (replaces a sensor policy's bundle, keeping its enabled packages). The preview diffs the file against what Fleet Manager has (SIDs, indicators, records, YARA rules, bundle packages), " +
-			"has Fleet Manager validate Suricata rules and YARA files, notes objects another tool manages, and for intel, input and YARA can add the source to a sensor policy's collection or ruleset. " +
+			"has Fleet Manager parse Suricata rules and validate YARA files, checks tuning files for syntax Fleet Manager rejects, notes objects another tool manages, and for intel, input and YARA can add the source to a sensor policy's collection or ruleset. " +
 			"Two steps: call without confirm_token for the preview; after the user approves, call again with the same arguments plus confirm_token.",
 		Annotations: &mcp.ToolAnnotations{Title: "Push content", DestructiveHint: &f, OpenWorldHint: &t},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a pushArgs) (*mcp.CallToolResult, any, error) {

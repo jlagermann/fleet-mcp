@@ -59,6 +59,8 @@ func Prepare(ctx context.Context, api API, req Request) (*Plan, error) {
 		err = p.planSuricataRules(ctx, api)
 	case SuricataYAML, SuricataThreshold, SuricataClassification, SuricataReference:
 		err = p.planSuricataConfig(ctx, api)
+	case SuricataDisable, SuricataEnable, SuricataModify:
+		err = p.planSuricataModifier(ctx, api)
 	case Bundle:
 		err = p.planBundle(ctx, api)
 	default:
@@ -569,7 +571,7 @@ func (p *Plan) validateRules(ctx context.Context, api API) {
 		p.warn("Fleet Manager's validation response was not JSON")
 		return
 	}
-	p.Validation = map[string]any{"by": "Fleet Manager", "rules": v["ruleCount"], "enabled": v["enabledRuleCount"], "disabled": v["disabledRuleCount"], "errors": v["errorCount"]}
+	p.Validation = map[string]any{"by": "Fleet Manager rule parser (it parses the rules; it does not run Suricata)", "rules": v["ruleCount"], "enabled": v["enabledRuleCount"], "disabled": v["disabledRuleCount"], "errors": v["errorCount"]}
 	if errs := listOf(v["errors"]); len(errs) > 0 {
 		var s []string
 		for _, e := range errs {

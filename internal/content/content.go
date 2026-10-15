@@ -64,7 +64,7 @@ var suricataConfig = map[Kind]struct{ Field, Store, File string }{
 // Kinds lists every kind, for argument descriptions.
 func Kinds() []string {
 	return []string{string(Intel), string(Input), string(Yara), string(SuricataRules), string(SuricataYAML),
-		string(SuricataThreshold), string(SuricataClassification), string(SuricataReference), string(Bundle)}
+		string(SuricataThreshold), string(SuricataClassification), string(SuricataReference), string(SuricataDisable), string(SuricataEnable), string(SuricataModify), string(Bundle)}
 }
 
 // DefaultSource names the source fleet-mcp creates when the user names none
@@ -79,7 +79,7 @@ const MaxFileBytes = 512 << 20
 
 // Request is one push.
 type Request struct {
-	Kind Kind   `json:"kind" jsonschema:"what to push: intel, input, yara, suricata_rules, suricata_yaml, suricata_threshold, suricata_classification, suricata_reference or bundle"`
+	Kind Kind   `json:"kind" jsonschema:"what to push: intel, input, yara, suricata_rules, suricata_yaml, suricata_threshold, suricata_classification, suricata_reference, suricata_disable, suricata_enable, suricata_modify (disable.conf, enable.conf, modify.conf of a Suricata policy with automation and configuration files) or bundle"`
 	File string `json:"file" jsonschema:"path of the local file to push, as it is (fleet-mcp does not merge or rewrite content)"`
 	// Source names the object updated in place, or created when none has it.
 	Source string `json:"source,omitempty" jsonschema:"intel/input: the file source alias; yara: the YARA source name; suricata_rules on a policy with rules automation: the rule source name. An existing one is updated in place, otherwise one is created. Default: fleet-mcp (input: the file name)"`

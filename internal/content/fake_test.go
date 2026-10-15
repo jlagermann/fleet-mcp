@@ -121,6 +121,8 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 			pol["record.updated-at"] = "now"
 		}
 		reply(w, 200, pol)
+	case m == "GET" && strings.HasSuffix(p, "/status") && strings.HasPrefix(p, "/suricata/"):
+		reply(w, 200, map[string]any{"processing": false, "errors": map[string]any{"sources": map[string]any{}, "modifiers": map[string]any{}, "output": nil}})
 	case m == "GET" && p == "/suricata/policies":
 		reply(w, 200, ordered(f.suricata))
 	case m == "POST" && p == "/suricata/validate/rules":

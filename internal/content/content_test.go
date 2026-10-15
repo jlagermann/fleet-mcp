@@ -161,7 +161,7 @@ func TestSuricataRulesAutomation(t *testing.T) {
 	}
 	out := preview(t, p)
 	for _, want := range []string{`"added_sids":{"count":1,"sample":["4"]}`, `"removed_sids":{"count":1,"sample":["2"]}`,
-		`"changed_sids":{"count":1,"sample":["1"]}`, `"newly_enabled_sids":{"count":1,"sample":["3"]}`, `"by":"Fleet Manager"`, "Corelight-update", `"used_by_sensor_policies":["Edge (1)"]`} {
+		`"changed_sids":{"count":1,"sample":["1"]}`, `"newly_enabled_sids":{"count":1,"sample":["3"]}`, `"by":"Fleet Manager rule parser`, "Corelight-update", `"used_by_sensor_policies":["Edge (1)"]`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan lacks %s: %s", want, out)
 		}
@@ -296,5 +296,83 @@ func TestPackageKey(t *testing.T) {
 		if got := content.PackageKey(in); got != want {
 			t.Errorf("PackageKey(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLintModifier(t *testing.T) {
+	// Lines Fleet Manager 29.2 rejected at upload, from a real Corelight-update modify.conf.
+	modify := strings.Join([]string{
+		"# comment",
+		`2620092 SrcAddress:![10.1.3.32, 10.1.3.33]`,
+		`re:/deployment SSLDecrypt/ DestAddress:![$HOME_NET]`,
+		`2101616 RuleOptions:(msg:"GPL DNS named version returned"; sid:2101616; rev:10;)`,
+		`8001666 Msg:"Some message"`,
+		`2038967 GID:3`,
+		`2011768 MetadataAppend:followup watch`,
+		`re:(mitre_technique_id\sT1190|tag\sExploit\b) "^(alert \S+) any " "$1 !$$SCANNERS "`,
+		`re:classtype:(web-application-attack); "^(alert \S+) any " "$1 x "`,
+		`Metadata:"deployment SSLDecrypt" Action:drop`,
+	}, "\n")
+	errs, warns := content.LintModifier(content.SuricataModify, []byte(modify))
+	for _, want := range []string{"line 5: change key \"Msg\"", "line 6: change key \"GID\"", "line 7: change key \"MetadataAppend\"",
+		"line 8: Fleet Manager needs a regex enclosed in slashes", "line 9: Fleet Manager needs a regex enclosed in slashes"} {
+		if !strings.Contains(strings.Join(errs, "\n"), want) {
+			t.Errorf("missing %q in %v", want, errs)
+		}
+	}
+	if len(errs) != 5 {
+		t.Errorf("%d problems, want 5: %v", len(errs), errs)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "line 10") {
+		t.Errorf("warnings: %v", warns)
+	}
+
+	disable := "2033683 # a comment\n1:2035465\nsid:2053281\nre:/x y/\nMetadata:\"deployment SSLDecrypt\"\nBogus:1\n2069171 Action:drop\n"
+	errs, warns = content.LintModifier(content.SuricataDisable, []byte(disable))
+	if len(errs) != 2 || !strings.Contains(errs[0], "line 6") || !strings.Contains(errs[1], "line 7") || len(warns) != 1 {
+		t.Errorf("disable: errs %v warns %v", errs, warns)
+	}
+}
+
+func TestSuricataModifierPush(t *testing.T) {
+	fm := newFake(t)
+	fm.suricata[7] = map[string]any{"id": 7, "name": "Lab", "rulesAutomation": true, "useModifierFiles": false,
+		"config": map[string]any{"srmEnableFlowBits": true}, "modifierFiles": []any{
+			map[string]any{"id": 1, "name": "disable.conf", "fileId": 0, "enabled": false, "status": "empty"},
+			map[string]any{"id": 2, "name": "enable.conf", "fileId": 0, "enabled": false, "status": "empty"},
+			map[string]any{"id": 3, "name": "modify.conf", "fileId": 0, "enabled": false, "status": "empty"},
+		}}
+	ctx := context.Background()
+	req := content.Request{Kind: content.SuricataDisable, File: writeFile(t, "disable.conf", []byte("2000328\nsid:2001219\n")), SuricataPolicy: "Lab"}
+	p, err := content.Prepare(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	for _, want := range []string{`switch Suricata policy \"Lab\" to \"Use configuration files\"`, "rule modifiers made in the rules manager stop applying",
+		`"flowbit_dependencies":true`, "even rules disable.conf turned off"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %s: %s", want, out)
+		}
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	sp := fm.suricata[7]
+	mods := sp["modifierFiles"].([]any)
+	if sp["useModifierFiles"] != true || len(mods) != 3 || mods[0].(map[string]any)["enabled"] != true ||
+		int64(mods[0].(map[string]any)["fileId"].(float64)) != res.FileID || mods[1].(map[string]any)["enabled"] != false {
+		t.Fatalf("policy after: %v", sp)
+	}
+	if !strings.Contains(strings.Join(res.Done, "\n"), "rebuilt the ruleset without errors") {
+		t.Fatalf("done: %v", res.Done)
+	}
+
+	// A policy without automation cannot take configuration files.
+	fm.suricata[8] = map[string]any{"id": 8, "name": "Plain", "rulesAutomation": false}
+	req.SuricataPolicy = "Plain"
+	if p, err = content.Prepare(ctx, fm.client, req); err != nil || p.Ready() {
+		t.Fatalf("no automation: %v %s", err, preview(t, p))
 	}
 }

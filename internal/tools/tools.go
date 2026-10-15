@@ -167,6 +167,7 @@ func readOnly(title string) *mcp.ToolAnnotations {
 // Register adds every tool to s.
 func Register(s *mcp.Server, d *Deps) {
 	registerGuides(s)
+	registerHostDiag(s, d)
 	if d.Fleets != nil {
 		registerFleets(s, d)
 		registerRead(s, d)

@@ -573,7 +573,7 @@ func (in *Installer) applyIdentity(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	script := "if [ -f " + identityPath + " ]; then cp -p " + identityPath + " " + identityPath + ".bak-$(date +%Y%m%d-%H%M%S); fi\n" +
+	script := backupScript(identityPath) +
 		writeFileScript(identityPath, string(pem), "0400", "corelight-fleetd:corelight-fleetd")
 	res, err := in.run(ctx, script)
 	if out, err := resultErr(res, err, ""); err != nil {
@@ -715,7 +715,7 @@ func (in *Installer) applyConfig(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	script := "if [ -f " + confPath + " ]; then cp -p " + confPath + " " + confPath + ".bak-$(date +%Y%m%d-%H%M%S); fi\n" +
+	script := backupScript(confPath) +
 		writeFileScript(confPath, string(b)+"\n", "0640", "root:corelight-fleetd")
 	res, err := in.run(ctx, script, community)
 	if out, err := resultErr(res, err, ""); err != nil {
@@ -884,4 +884,12 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return s
+}
+
+// backupScript copies path to path.bak-<time> if it exists. The copy is
+// root-only (0600): the configuration holds the sensor community string
+// and the identity file holds a private key, and a plain cp -p would keep
+// the mode the file had before fleet-mcp restricted it.
+func backupScript(path string) string {
+	return "if [ -f " + path + " ]; then b=" + path + ".bak-$(date +%Y%m%d-%H%M%S); cp -p " + path + " \"$b\" && chown root:root \"$b\" && chmod 600 \"$b\"; fi\n"
 }

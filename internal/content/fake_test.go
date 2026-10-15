@@ -121,6 +121,37 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 			pol["record.updated-at"] = "now"
 		}
 		reply(w, 200, pol)
+	case strings.HasPrefix(p, "/suricata/") && strings.HasSuffix(p, "/modifiers") && p != "/suricata/validate/modifiers":
+		sid, _ := strconv.ParseInt(parts[1], 10, 64)
+		f.srmModifiers(w, m, sid, body, r)
+	case m == "GET" && strings.HasPrefix(p, "/suricata/") && strings.HasSuffix(p, "/rules"):
+		sid, _ := strconv.ParseInt(parts[1], 10, 64)
+		var q map[string][]string
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("searchParams")), &q)
+		items := []any{}
+		for _, s := range q["sid"] {
+			if rule := f.effectiveRule(sid, s); rule != nil {
+				items = append(items, rule)
+			}
+		}
+		reply(w, 200, map[string]any{"items": items, "totalItemCount": len(items)})
+	case m == "POST" && p == "/suricata/validate/modifiers":
+		var mods []map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&mods)
+		msgs, bad := []string{}, false
+		for _, x := range mods {
+			ck := strings.ToLower(fmt.Sprint(x["change"].(map[string]any)["key"]))
+			if ck == "msg" {
+				msgs, bad = append(msgs, `invalid change key "msg"`), true
+			} else {
+				msgs = append(msgs, "")
+			}
+		}
+		if bad {
+			reply(w, 400, msgs)
+			return
+		}
+		reply(w, 200, msgs)
 	case m == "GET" && strings.HasSuffix(p, "/status") && strings.HasPrefix(p, "/suricata/"):
 		reply(w, 200, map[string]any{"processing": false, "errors": map[string]any{"sources": map[string]any{}, "modifiers": map[string]any{}, "output": nil}})
 	case m == "GET" && p == "/suricata/policies":
@@ -295,4 +326,76 @@ func (f *fakeFM) graphql(w http.ResponseWriter, r *http.Request) {
 	default:
 		reply(w, 200, map[string]any{"errors": []any{map[string]any{"message": "fake: unknown query " + q}}})
 	}
+}
+
+// srmModifiers keeps per-rule modifiers in sp["mods"] ([]map) and the
+// policy's base rules in sp["rules"] (sid -> map like the rules API).
+func (f *fakeFM) srmModifiers(w http.ResponseWriter, m string, id int64, body map[string]any, r *http.Request) {
+	sp := f.suricata[id]
+	mods, _ := sp["mods"].([]any)
+	switch m {
+	case "GET":
+		reply(w, 200, append([]any{}, mods...))
+	case "POST":
+		for _, x := range body["modifications"].([]any) {
+			mm := x.(map[string]any)
+			mm["id"] = float64(f.id())
+			mods = append(mods, mm)
+		}
+		sp["mods"] = mods
+		w.WriteHeader(204)
+	case "PUT":
+		for i, x := range mods {
+			if x.(map[string]any)["id"] == body["id"] {
+				mods[i] = body
+			}
+		}
+		w.WriteHeader(204)
+	case "DELETE":
+		del := map[float64]bool{}
+		for _, x := range body["modifications"].([]any) {
+			del[x.(float64)] = true
+		}
+		var keep []any
+		for _, x := range mods {
+			if !del[x.(map[string]any)["id"].(float64)] {
+				keep = append(keep, x)
+			}
+		}
+		sp["mods"] = keep
+		f.deleted = append(f.deleted, fmt.Sprintf("modifiers %v", body["modifications"]))
+		w.WriteHeader(204)
+	}
+}
+
+// effectiveRule applies the policy's SID modifiers to a base rule.
+func (f *fakeFM) effectiveRule(id int64, sid string) map[string]any {
+	sp := f.suricata[id]
+	base, _ := sp["rules"].(map[string]any)[sid].(map[string]any)
+	if base == nil {
+		return nil
+	}
+	rule := map[string]any{}
+	for k, v := range base {
+		rule[k] = v
+	}
+	mods, _ := sp["mods"].([]any)
+	for _, x := range mods {
+		mm := x.(map[string]any)
+		match := mm["match"].(map[string]any)
+		if match["key"] != "sid" || match["value"] != sid {
+			continue
+		}
+		switch mm["action"] {
+		case "disable":
+			rule["disabled"] = true
+		case "enable":
+			rule["disabled"] = false
+		case "modify":
+			ch := mm["change"].(map[string]any)
+			field := map[string]string{"srcaddress": "srcAddress", "destaddress": "destAddress", "srcport": "srcPort", "destport": "destPort", "action": "action", "protocol": "protocol", "ruleoptions": "rawOptions"}[fmt.Sprint(ch["key"])]
+			rule[field] = ch["value"]
+		}
+	}
+	return rule
 }

@@ -173,9 +173,11 @@ func Register(s *mcp.Server, d *Deps) {
 		registerDiagnose(s, d)
 		registerGeneric(s, d)
 		registerNewPolicy(s, d)
+		registerSuricataTest(s, d)
 		if d.EnableWrites {
 			registerWrite(s, d)
 			registerContentWrite(s, d)
+			registerSuricataModify(s, d)
 			if d.Secrets != nil {
 				registerNewPolicyWrite(s, d)
 			}

@@ -21,7 +21,7 @@
 
    Point out in particular:
    - Objects managed by Corelight-update or Fleet-client are updated anyway. The note says that tool overwrites the change if it still runs.
-   - Rule errors and duplicate SIDs. Fleet Manager only parses the rules; it does not run Suricata, so it can pass rules that still fail to load on the sensors, for example rules for a protocol the sensors' Suricata configuration disables. A real test needs Suricata (`suricata -T`) with a configuration matching the sensors'.
+   - Rule errors and duplicate SIDs. Fleet Manager only parses the rules; it does not run Suricata. Offer a real test with `fm_suricata_test` (see the tune-suricata guide): before pushing a rules file test the file, and after a push to a policy with Suricata automation test the policy's generated ruleset.
    - For tuning files: the syntax problems (Fleet Manager rejects the whole file for one bad line), the `Metadata:` warning, a switch from the rules manager to configuration files (rule modifiers made in the rules manager stop applying), and whether "Enable flowbit dependencies" is on. For users coming from Corelight-update, explain the differences in docs/corelight-update-migration.md of the fleet-mcp repository: no `MetadataAppend`, no `Msg`/`GID`/`Rev` changes, no regex rewrites, and a flowbit resolver that runs one pass, ignores isnotset, toggle, xbits and hostbits, adds no noalert and also enables setters that are not needed.
    - For bundles: new packages arrive disabled, and enabled packages missing from the new bundle stop loading.
    - For input files: whether the connected sensors report a package that reads the file.

@@ -69,3 +69,29 @@ func TestString(t *testing.T) {
 		}
 	}
 }
+
+func TestNameValuePairs(t *testing.T) {
+	in := map[string]any{
+		"match":    map[string]any{"key": "sid", "value": "2009285"},
+		"change":   map[string]any{"key": "srcaddress", "value": "!10.0.0.1"},
+		"setting":  map[string]any{"key": "password", "value": "hunter2"},
+		"thing":    map[string]any{"key": "abc123secret"},
+		"settings": []any{map[string]any{"key": "proxy.password", "value": "x"}},
+	}
+	out := Value(in).(map[string]any)
+	if m := out["match"].(map[string]any); m["key"] != "sid" || m["value"] != "2009285" {
+		t.Errorf("match: %v", m)
+	}
+	if m := out["change"].(map[string]any); m["key"] != "srcaddress" || m["value"] != "!10.0.0.1" {
+		t.Errorf("change: %v", m)
+	}
+	if m := out["setting"].(map[string]any); m["key"] != "password" || m["value"] != Mask {
+		t.Errorf("setting: %v", m)
+	}
+	if m := out["thing"].(map[string]any); m["key"] != Mask {
+		t.Errorf("a lone key must stay masked: %v", m)
+	}
+	if m := out["settings"].([]any)[0].(map[string]any); m["value"] != Mask {
+		t.Errorf("settings: %v", m)
+	}
+}

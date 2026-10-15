@@ -23,7 +23,7 @@ func writeFile(t *testing.T, name string, b []byte) string {
 	return p
 }
 
-func preview(t *testing.T, p *content.Plan) string {
+func preview(t *testing.T, p any) string {
 	t.Helper()
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -374,5 +374,103 @@ func TestSuricataModifierPush(t *testing.T) {
 	req.SuricataPolicy = "Plain"
 	if p, err = content.Prepare(ctx, fm.client, req); err != nil || p.Ready() {
 		t.Fatalf("no automation: %v %s", err, preview(t, p))
+	}
+}
+
+func srmPolicy(fm *fakeFM) {
+	rule := func(sid string, disabled bool) map[string]any {
+		return map[string]any{"sid": sid, "message": `"r` + sid + `"`, "disabled": disabled, "action": "alert", "protocol": "http",
+			"srcAddress": "any", "srcPort": "any", "destAddress": "any", "destPort": "any", "rawOptions": "(msg:\"r\"; sid:" + sid + ";)"}
+	}
+	fm.suricata[13] = map[string]any{"id": 13, "name": "SRM", "rulesAutomation": true, "useModifierFiles": false,
+		"config": map[string]any{"srmEnableFlowBits": true},
+		"rules":  map[string]any{"100": rule("100", false), "200": rule("200", true), "300": rule("300", false)},
+		"mods": []any{
+			map[string]any{"id": float64(1), "action": "disable", "match": map[string]any{"key": "sid", "value": "300"}, "change": map[string]any{"key": "", "value": ""}, "comment": "old"},
+			map[string]any{"id": float64(2), "action": "modify", "match": map[string]any{"key": "sid", "value": "100"}, "change": map[string]any{"key": "srcaddress", "value": "!10.0.0.1"}, "comment": "old"},
+		}}
+}
+
+func TestSRMModify(t *testing.T) {
+	fm := newFake(t)
+	srmPolicy(fm)
+	ctx := context.Background()
+	req := content.SRMRequest{SuricataPolicy: "SRM", Changes: []content.RuleChange{
+		{SID: "100", Action: "disable", Comment: "noisy"},
+		{SID: "100", Action: "modify", ChangeKey: "SrcAddress", ChangeValue: "!10.0.0.2"},
+		{SID: "200", Action: "enable"},
+		{SID: "300", Action: "enable"},
+		{SID: "300", Action: "enable", Comment: "dup"},
+	}}
+	p, err := content.PrepareSRM(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	if !p.Ready() || len(p.Add) != 3 || len(p.Update) != 1 || len(p.Remove) != 1 || !strings.Contains(preview(t, p), "change 5 repeats") {
+		t.Fatalf("plan: add %d update %d remove %d unchanged %d: %s", len(p.Add), len(p.Update), len(p.Remove), len(p.Unchanged), out)
+	}
+	for _, want := range []string{`update modifier 2: sid:100 srcaddress \"!10.0.0.1\" -> \"!10.0.0.2\"`, "remove modifier 1 (disable sid:300): replaced by enable",
+		`"200":"enabled"`, "re-enables a disabled rule"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %s: %s", want, out)
+		}
+	}
+	res, err := content.ApplySRM(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	after := res.RulesAfter
+	if after["100"].Enabled || after["100"].Src != "!10.0.0.2" || !after["200"].Enabled || !after["300"].Enabled {
+		t.Fatalf("after: %+v", after)
+	}
+
+	// The same request again: nothing to do.
+	p, _ = content.PrepareSRM(ctx, fm.client, req)
+	if p.Ready() || len(p.Blockers) > 0 {
+		t.Fatalf("second run should be a no-op: %s", preview(t, p))
+	}
+
+	// Remove by SID.
+	p, err = content.PrepareSRM(ctx, fm.client, content.SRMRequest{SuricataPolicy: "13", Remove: []string{"sid:100"}})
+	if err != nil || len(p.Remove) != 2 {
+		t.Fatalf("remove plan: %v %s", err, preview(t, p))
+	}
+}
+
+func TestSRMBlockers(t *testing.T) {
+	fm := newFake(t)
+	srmPolicy(fm)
+	ctx := context.Background()
+	p, err := content.PrepareSRM(ctx, fm.client, content.SRMRequest{SuricataPolicy: "SRM", Changes: []content.RuleChange{
+		{SID: "100", Action: "modify", ChangeKey: "msg", ChangeValue: "x"},
+		{SID: "abc", Action: "disable"},
+		{MatchKey: "re", MatchValue: "no slashes", Action: "disable"},
+		{SID: "100", Action: "drop"},
+		{SID: "999", Action: "disable"},
+	}, Remove: []string{"77"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := preview(t, p)
+	if p.Ready() || len(p.Blockers) != 5 || !strings.Contains(out, "no rule with SID 999") {
+		t.Fatalf("%d blockers: %s", len(p.Blockers), out)
+	}
+
+	fm.suricata[13]["useModifierFiles"] = true
+	p, _ = content.PrepareSRM(ctx, fm.client, content.SRMRequest{SuricataPolicy: "SRM", Changes: []content.RuleChange{{SID: "100", Action: "disable"}}})
+	if p.Ready() || !strings.Contains(preview(t, p), "uses configuration files") {
+		t.Fatalf("config-files mode: %s", preview(t, p))
+	}
+}
+
+func TestSRMClash(t *testing.T) {
+	fm := newFake(t)
+	srmPolicy(fm)
+	p, err := content.PrepareSRM(context.Background(), fm.client, content.SRMRequest{SuricataPolicy: "SRM", Changes: []content.RuleChange{
+		{SID: "200", Action: "enable"}, {SID: "200", Action: "disable"},
+	}})
+	if err != nil || p.Ready() || !strings.Contains(preview(t, p), "both enable and disable requested for sid:200") {
+		t.Fatalf("%v %s", err, preview(t, p))
 	}
 }

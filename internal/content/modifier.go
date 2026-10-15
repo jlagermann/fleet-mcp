@@ -194,14 +194,25 @@ func (a *applier) suricataModifier(ctx context.Context) error {
 // waitRuleset waits (up to two minutes) for Fleet Manager to finish
 // rebuilding a Suricata policy's ruleset and reports the outcome.
 func (a *applier) waitRuleset(ctx context.Context, bad func(string, ...any)) {
-	id := idOf(a.p.suricata["id"])
+	done, problem := WaitRuleset(ctx, a.api, idOf(a.p.suricata["id"]))
+	if problem != "" {
+		bad("%s", problem)
+	}
+	if done != "" {
+		a.did("%s", done)
+	}
+}
+
+// WaitRuleset waits (up to two minutes) for Fleet Manager to finish
+// rebuilding a Suricata policy's ruleset. It returns what happened, or a
+// problem (build errors, or the status could not be read).
+func WaitRuleset(ctx context.Context, api API, id int64) (done, problem string) {
 	deadline := time.Now().Add(2 * time.Minute)
 	time.Sleep(rulesetSettle)
 	for {
 		var st map[string]any
-		if err := a.api.GetJSON(ctx, fmt.Sprintf("%s/%d/status", pathSuricata, id), nil, &st); err != nil {
-			bad("could not read the ruleset build status: %v", err)
-			return
+		if err := api.GetJSON(ctx, fmt.Sprintf("%s/%d/status", pathSuricata, id), nil, &st); err != nil {
+			return "", fmt.Sprintf("could not read the ruleset build status: %v", err)
 		}
 		if st["processing"] != true {
 			errs := obj(st["errors"])
@@ -215,19 +226,16 @@ func (a *applier) waitRuleset(ctx context.Context, bad func(string, ...any)) {
 				msgs = append(msgs, fmt.Sprintf("output: %v", out))
 			}
 			if len(msgs) > 0 {
-				bad("Fleet Manager reports ruleset build errors: %s", strings.Join(msgs, "; "))
-			} else {
-				a.did("Fleet Manager rebuilt the ruleset without errors")
+				return "", "Fleet Manager reports ruleset build errors: " + strings.Join(msgs, "; ")
 			}
-			return
+			return "Fleet Manager rebuilt the ruleset without errors", ""
 		}
 		if time.Now().After(deadline) {
-			a.did("Fleet Manager was still rebuilding the ruleset after 2 minutes; check fm_suricata_policy_get later")
-			return
+			return "Fleet Manager was still rebuilding the ruleset after 2 minutes; check fm_suricata_policy_get later", ""
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return "", ctx.Err().Error()
 		case <-time.After(5 * time.Second):
 		}
 	}

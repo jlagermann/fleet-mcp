@@ -37,6 +37,24 @@ func walk(v any, extra []string) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
+		// {"key": <name>, "value": <v>} is a name/value pair (Suricata
+		// modifiers, settings lists): the name is a label, not a secret,
+		// and the value is masked when the name is sensitive.
+		if name, ok := t["key"].(string); ok {
+			if _, hasValue := t["value"]; hasValue {
+				for k, val := range t {
+					switch {
+					case k == "key":
+						out[k] = name
+					case k == "value" && isSensitive(name, extra) && !harmless(val):
+						out[k] = Mask
+					default:
+						out[k] = walk(val, extra)
+					}
+				}
+				return out
+			}
+		}
 		for k, val := range t {
 			if isSensitive(k, extra) && !harmless(val) {
 				out[k] = Mask

@@ -447,10 +447,15 @@ func secretCmd(args []string) error {
 		fmt.Println(v)
 		return nil
 	case "import":
-		if len(args) != 3 {
-			return errors.New("usage: fleet-mcp secret import <name> <file>")
+		if len(args) < 3 {
+			return errors.New("usage: fleet-mcp secret import <name> <file> [-host <fleet manager host>]")
 		}
-		summary, err := tools.ImportFile(e.secrets, args[1], args[2])
+		fs := flag.NewFlagSet("secret import", flag.ContinueOnError)
+		hostFlag := fs.String("host", "", "Fleet Manager host, for per-host files such as tls-cert.pem")
+		if err := fs.Parse(args[3:]); err != nil {
+			return err
+		}
+		summary, err := tools.ImportFile(e.secrets, *hostFlag, args[1], args[2])
 		if err != nil {
 			return err
 		}

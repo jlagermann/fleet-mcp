@@ -50,6 +50,7 @@ const (
 	MCPPassword      = "mcp-password"
 	SensorPassword   = "sensor-admin-password"
 	SensorSSHKey     = "sensor-ssh-key"
+	TLSCert          = "tls-cert.pem"
 )
 
 // Spec describes a known secret.
@@ -80,6 +81,7 @@ var Known = []Spec{
 	{Name: MCPPassword, Scope: Host, Kind: Generated, Description: "password of the local user fleet-mcp logs in as", UsedFor: "the MCP server's API access"},
 	{Name: SensorPassword, Scope: Global, Kind: Prompt, Description: "Corelight Sensor admin password; the diag-shell SSH user uses the same password", UsedFor: "moving sensors between Fleet Managers (SSH to the sensor as diag-shell)"},
 	{Name: SensorSSHKey, Scope: Global, Kind: Generated, Description: "fleet-mcp's own SSH key for logging in to sensors as diag-shell (public key installed per sensor as security.user.admin.ssh_public_key)", UsedFor: "moving sensors without the admin password"},
+	{Name: TLSCert, Scope: Host, Kind: File, Description: "web interface and API certificate for this Fleet Manager host (.pem with certificate, chain and unencrypted key), e.g. from your own CA", UsedFor: "replacing the certificate browsers and API clients see (fm_host_configure tls_cert)"},
 }
 
 // Lookup returns the Spec for name.
@@ -244,6 +246,9 @@ func howTo(name string) string {
 	case Prompt:
 		return "; the user sets it in a terminal with: " + Command("secret", "set", name)
 	case File:
+		if spec.Scope == Host {
+			return fmt.Sprintf("; import it with fm_secret_import_file (name %q, the host and the file's path) or: %s", name, Command("secret", "import", name, "<path>", "-host", "<host>"))
+		}
 		return fmt.Sprintf("; import it with fm_secret_import_file (name %q and the file's path) or: %s", name, Command("secret", "import", name, "<path>"))
 	default:
 		if name == SensorSSHKey {

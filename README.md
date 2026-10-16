@@ -10,14 +10,14 @@ AI agents use several kinds of help. fleet-mcp provides tools, server instructio
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **44 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **46 tools** |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects. Clients truncate long instructions (Claude Code at 4,096 bytes), so fleet-mcp's hold only the rules for every call: approval after a preview, no secrets in the chat, naming the Fleet Manager, and which guide to load for which task. | the agent, by reading it | built in, about 2.4 KB |
-| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **10 guides**, each also a prompt |
+| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **11 guides**, each also a prompt |
 | **Skill** | A packaged set of instructions (a `SKILL.md`) installed in the agent itself. | the agent, by reading it | none needed; you can write your own on top of these tools |
 
-The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`. Each prompt takes an optional `request` argument, your task in your own words.
+The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`, `maintain-fleet-manager`. Each prompt takes an optional `request` argument, your task in your own words.
 
-The 44 tools:
+The 46 tools:
 
 | Group | Count | Tools |
 |---|---|---|
@@ -27,7 +27,7 @@ The 44 tools:
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
 | Suricata ruleset test (read-only, over SSH on a host you name) | 1 | `fm_suricata_test` |
-| Changes (only with writes enabled; preview, then confirm) | 15 | `fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
+| Changes (only with writes enabled; preview, then confirm) | 17 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -36,9 +36,9 @@ Each tool is described in [Tools](#tools); the command-line companion is in [Com
 - **Install and set up Fleet Manager** on an Ubuntu host over SSH, following Corelight's installation guide.
 - **Fleet Manager API:** the REST API (`/fleet/v1/*`) and the GraphQL API (`/graph/query`): sensors, groups, tags, policies, Suricata, content resources, YARA, connectors, sensor updates, backups, users, roles and settings.
 - **Content:** push intel, input, YARA, Suricata rules and configuration, and Zeek package bundles as they are (`fm_content_push`).
-- **Fleet Manager host health:** a read-only check of a running host (`fm_host_diagnose`).
+- **Fleet Manager host health and maintenance:** a read-only check of a running host (`fm_host_diagnose`); `corelight-fleetd.conf` settings, identity and web certificates, the Software Sensor license and the community string (`fm_host_configure`); upgrades with a backup first (`fm_host_upgrade`).
 - **Fleet-wide views:** health of every Fleet Manager at once (`fm_fleet_health`) and policy drift between policies or Fleet Managers (`fm_policy_diff`).
-- **Planned:** upgrades, `corelight-fleetd.conf` changes, licenses and TLS certificates on an existing host; read-only diagnostics of Fleet Manager's databases.
+- **Planned:** read-only diagnostics of Fleet Manager's databases.
 
 Out of scope: the Corelight Sensor API, and scheduled content fetching.
 
@@ -190,6 +190,21 @@ Each step checks first and is skipped when already done, so an install that stop
 The install writes a profile for the new Fleet Manager (its URL, the agent user, the password file and the pinned certificate), and it becomes available to the API tools straight away under the host name you installed it on.
 
 To read the community string later, for pairing sensors: `fleet-mcp secret show community-string -host <host>` (prints only in your terminal; `-copy` puts it on the clipboard).
+
+## Maintain a Fleet Manager host
+
+`fm_host_diagnose` checks a running host read-only. Two tools change it, each previewed first and refused for hosts of Fleet Managers marked `read_only`:
+
+- **`fm_host_configure`** changes `corelight-fleetd.conf` settings by path (`{"log-level": "DEBUG"}`, `{"messaging/http-options/bind-address": ":1443"}`; null removes one), and installs files from the secret store: a renewed product identity certificate (`identity_cert`), a web interface certificate (`tls_cert`, from `tls-cert.pem` imported for that host), the Software Sensor license (`license`), or a new community string (`community_string`). Secrets in settings are refused. Settings that name a file are checked on the host first. Each replaced file is backed up root-only, `corelight-fleetd` is restarted and its API awaited. If it does not come up, the backups are restored, the service is restarted and Fleet Manager's own error is reported. A web certificate is installed as its own file, and sensor connections (port 1443) are pinned to the identity certificate. When the web certificate changes, the pinned certificate in the fleet-mcp profile is updated.
+- **`fm_host_upgrade`** lists the installed and available versions, checks free space and the repository, makes a Fleet Manager backup first (Fleet Manager keeps one backup, so this replaces the previous image), installs the version keeping `corelight-fleetd.conf`, restarts, and checks the version. A downgrade needs `allow_downgrade`. Sensor software is not changed.
+
+Sample prompts:
+
+```text
+Check the Fleet Manager host for fm-east and renew its identity certificate from C:\certs\fm-2027.pem.
+Upgrade fm-west to the newest Fleet Manager version.
+Turn on debug logging on the fm-east Fleet Manager for an hour.
+```
 
 ## Several Fleet Managers
 
@@ -485,8 +500,10 @@ Always available:
 | `fm_host_check` | Read-only readiness check of a host |
 | `fm_host_diagnose` | Read-only health check of a running Fleet Manager host: service, version and available upgrade, load, memory, disk and data path, journal errors (24 h), certificate expiry, ports 443/1443, NTP sync, world-readable files holding secrets, newest backup |
 | `fm_secrets_status` | Which secrets are stored (never values) and how to add missing ones |
-| `fm_secret_import_file` | Import the identity certificate or a Software Sensor license from a file |
+| `fm_secret_import_file` | Import the identity certificate, a Software Sensor license, or a host's web certificate (`tls-cert.pem`, with `host`) from a file |
 | `fm_host_install` | Install and set up Fleet Manager (writes enabled; preview, then confirm) |
+| `fm_host_configure` | Change an installed host: `corelight-fleetd.conf` settings, community string, identity or web certificate, license; backup, restart, automatic rollback (writes enabled; preview, then confirm) |
+| `fm_host_upgrade` | Upgrade or downgrade Fleet Manager from the Corelight repository, with a backup first (writes enabled; preview, then confirm) |
 
 Fleet Manager API tools (each takes an optional `fleet` argument):
 
@@ -530,7 +547,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 
@@ -560,6 +577,7 @@ fleet-mcp secret list [host]                # stored secrets (never values)
 fleet-mcp secret set-setting <name>         # hidden prompt: proxy password, S3 secret key or "exporter:<name>:<field>" for fm_policy_create
 fleet-mcp secret set repo-token             # hidden prompt
 fleet-mcp secret import identity-cert.pem <path>
+fleet-mcp secret import tls-cert.pem <path> -host <host>
 fleet-mcp secret show community-string -host <host> [-copy]
 fleet-mcp policy tokens <package>           # enter the exporter tokens a policy package needs (hidden prompt)
 fleet-mcp fleets [-check]                   # the Fleet Managers this server can manage

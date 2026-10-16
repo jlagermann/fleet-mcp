@@ -110,12 +110,13 @@ func registerHost(s *mcp.Server, d *Deps) {
 	})
 
 	type importArgs struct {
-		Name string `json:"name" jsonschema:"identity-cert.pem (Fleet Manager product identity certificate) or sensor-license.txt"`
+		Name string `json:"name" jsonschema:"identity-cert.pem (Fleet Manager product identity certificate), sensor-license.txt, or tls-cert.pem (a Fleet Manager host's web certificate; needs host)"`
+		Host string `json:"host,omitempty" jsonschema:"the Fleet Manager host the file belongs to (for tls-cert.pem)"`
 		Path string `json:"path" jsonschema:"path of the file on this machine"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_secret_import_file",
-		Description: "Import a license or certificate file into fleet-mcp's local secret store (readable only by the current user) for use by fm_host_install. " +
+		Description: "Import a license or certificate file into fleet-mcp's local secret store (readable only by the current user) for fm_host_install and fm_host_configure. " +
 			"The file is validated (the identity certificate must contain a certificate and its matching key); only a summary such as subject and expiry is returned, never the contents.",
 		Annotations: &mcp.ToolAnnotations{Title: "Import secret file", DestructiveHint: &f, IdempotentHint: true, OpenWorldHint: &f, ReadOnlyHint: false},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a importArgs) (*mcp.CallToolResult, any, error) {
@@ -124,9 +125,9 @@ func registerHost(s *mcp.Server, d *Deps) {
 		}
 		spec, ok := secrets.Lookup(a.Name)
 		if !ok || spec.Kind != secrets.File {
-			return nil, nil, fmt.Errorf("%q is not a file secret; use identity-cert.pem or sensor-license.txt (tokens are set with: fleet-mcp secret set <name>)", a.Name)
+			return nil, nil, fmt.Errorf("%q is not a file secret; use identity-cert.pem, sensor-license.txt or tls-cert.pem (tokens are set with: fleet-mcp secret set <name>)", a.Name)
 		}
-		summary, err := ImportFile(d.Secrets, a.Name, a.Path)
+		summary, err := ImportFile(d.Secrets, a.Host, a.Name, a.Path)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -136,7 +137,10 @@ func registerHost(s *mcp.Server, d *Deps) {
 }
 
 // ImportFile validates a file and stores it as a secret.
-func ImportFile(s *secrets.Store, name, path string) (any, error) {
+func ImportFile(s *secrets.Store, hostName, name, path string) (any, error) {
+	if spec, ok := secrets.Lookup(name); ok && spec.Scope == secrets.Host && hostName == "" {
+		return nil, fmt.Errorf("%s belongs to one Fleet Manager host: give the host", name)
+	}
 	path = filepath.Clean(strings.Trim(strings.TrimSpace(path), `"'`))
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -153,7 +157,7 @@ func ImportFile(s *secrets.Store, name, path string) (any, error) {
 	if err != nil {
 		return summary, err
 	}
-	if err := s.Set("", name, b); err != nil {
+	if err := s.Set(hostName, name, b); err != nil {
 		return nil, err
 	}
 	return summary, nil

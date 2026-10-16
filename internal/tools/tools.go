@@ -200,6 +200,7 @@ func Register(s *mcp.Server, d *Deps) {
 		}
 		if d.EnableWrites {
 			registerHostWrite(s, d)
+			registerHostMaint(s, d)
 			if d.Fleets != nil {
 				registerSensorWrite(s, d)
 				registerSensorKeyWrite(s, d)

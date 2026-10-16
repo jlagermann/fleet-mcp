@@ -18,6 +18,7 @@ type CertSummary struct {
 	Subject      string    `json:"subject"`
 	Issuer       string    `json:"issuer"`
 	DNSNames     []string  `json:"dns_names,omitempty"`
+	IPAddresses  []string  `json:"ip_addresses,omitempty"`
 	NotBefore    time.Time `json:"not_before"`
 	NotAfter     time.Time `json:"not_after"`
 	DaysLeft     int       `json:"days_left"`
@@ -66,9 +67,32 @@ func InspectPEM(b []byte) (*CertSummary, error) {
 		HasKey:       hasKey,
 		Certificates: len(certs),
 	}
+	for _, ip := range c.IPAddresses {
+		s.IPAddresses = append(s.IPAddresses, ip.String())
+	}
 	if hasKey {
 		_, err := tls.X509KeyPair(b, b)
 		s.KeyMatches = err == nil
+	}
+	return s, nil
+}
+
+// ValidateTLSCert checks a web certificate: certificate, matching unencrypted
+// key, valid now.
+func ValidateTLSCert(b []byte) (*CertSummary, error) {
+	s, err := InspectPEM(b)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !s.HasKey:
+		return s, errors.New("the file has no private key; put the certificate, its chain and the unencrypted key in one .pem")
+	case !s.KeyMatches:
+		return s, errors.New("the private key does not match the certificate")
+	case time.Now().After(s.NotAfter):
+		return s, fmt.Errorf("the certificate expired on %s", s.NotAfter.Format("2006-01-02"))
+	case time.Now().Before(s.NotBefore):
+		return s, fmt.Errorf("the certificate is not valid until %s", s.NotBefore.Format("2006-01-02"))
 	}
 	return s, nil
 }
@@ -173,6 +197,8 @@ func Validate(name string, b []byte) (any, error) {
 		return nil, ValidateRepoToken(strings.TrimSpace(string(b)))
 	case CommunityString:
 		return nil, ValidateCommunityString(strings.TrimSpace(string(b)))
+	case TLSCert:
+		return ValidateTLSCert(b)
 	case SensorLicense:
 		if len(strings.TrimSpace(string(b))) == 0 {
 			return nil, errors.New("the license file is empty")

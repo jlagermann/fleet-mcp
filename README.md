@@ -67,9 +67,9 @@ Paste a prompt like this into Claude Code (or another MCP client that can edit i
 Register the fleet-mcp MCP server for me at user scope. The binary is at
 /home/me/bin/fleet-mcp (run it as "fleet-mcp stdio"). Enable writes, use "ubuntu"
 as the default SSH user for Fleet Manager hosts, and don't connect it to an
-existing Fleet Manager yet. Add "ask" permission rules for fm_host_install,
-fm_api_write, fm_graphql_mutate, fm_policy_import, fm_policy_copy,
-fm_sensor_move and fm_sensor_ssh_key so I approve every change.
+existing Fleet Manager yet. Add "ask" permission rules for every fleet-mcp tool that
+changes something (the tools listed under "Changes need two calls" in the
+README) so I approve every change.
 ```
 
 To connect it to an existing Fleet Manager instead:
@@ -107,12 +107,22 @@ Permission rules for approving each change, in `~/.claude/settings.json`:
   "permissions": {
     "ask": [
       "mcp__fleet-mcp__fm_host_install",
+      "mcp__fleet-mcp__fm_host_configure",
+      "mcp__fleet-mcp__fm_host_upgrade",
       "mcp__fleet-mcp__fm_api_write",
       "mcp__fleet-mcp__fm_graphql_mutate",
+      "mcp__fleet-mcp__fm_policy_create",
+      "mcp__fleet-mcp__fm_policy_update",
+      "mcp__fleet-mcp__fm_policy_delete",
       "mcp__fleet-mcp__fm_policy_import",
       "mcp__fleet-mcp__fm_policy_copy",
+      "mcp__fleet-mcp__fm_group_manage",
+      "mcp__fleet-mcp__fm_content_push",
+      "mcp__fleet-mcp__fm_suricata_modify",
       "mcp__fleet-mcp__fm_sensor_move",
-      "mcp__fleet-mcp__fm_sensor_ssh_key"
+      "mcp__fleet-mcp__fm_sensor_ssh_key",
+      "mcp__fleet-mcp__fm_sensor_action",
+      "mcp__fleet-mcp__fm_sensor_support_access"
     ]
   }
 }

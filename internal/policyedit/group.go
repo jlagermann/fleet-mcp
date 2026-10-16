@@ -74,6 +74,9 @@ func catalog(ctx context.Context, api API) ([]sensorRec, error) {
 	var out []sensorRec
 	for _, s := range cat.List {
 		r := sensorRec{uid: str(s["uid"]), name: str(s["name"]), group: idOf(s["group.id"]), connected: s["fleet.connected"] == true, licenses: map[string]bool{}}
+		if r.name == "" {
+			r.name = r.uid // a sensor that just connected has not reported its name yet
+		}
 		for _, l := range listOf(s["licenses"]) {
 			m := obj(l)
 			r.licenses[str(m["name"])] = m["active"] == true
@@ -236,7 +239,7 @@ func PrepareGroup(ctx context.Context, api API, req GroupRequest) (*GroupPlan, e
 	for _, ref := range req.AddSensors {
 		s, ok := find(ref)
 		if !ok {
-			p.Blockers = append(p.Blockers, fmt.Sprintf("no sensor %q on this Fleet Manager", ref))
+			p.Blockers = append(p.Blockers, fmt.Sprintf("no sensor %q on this Fleet Manager (sensors: %s; a sensor that just connected is known only by its uid until it reports its name)", ref, sensorList(sensors)))
 			continue
 		}
 		if cur != nil && s.group == cur.ID {
@@ -253,7 +256,7 @@ func PrepareGroup(ctx context.Context, api API, req GroupRequest) (*GroupPlan, e
 	for _, ref := range req.RemoveSensors {
 		s, ok := find(ref)
 		if !ok {
-			p.Blockers = append(p.Blockers, fmt.Sprintf("no sensor %q on this Fleet Manager", ref))
+			p.Blockers = append(p.Blockers, fmt.Sprintf("no sensor %q on this Fleet Manager (sensors: %s; a sensor that just connected is known only by its uid until it reports its name)", ref, sensorList(sensors)))
 			continue
 		}
 		if cur == nil || s.group != cur.ID {
@@ -457,4 +460,19 @@ func ApplyGroup(ctx context.Context, api API, p *GroupPlan) (*GroupResult, error
 		}
 	}
 	return res, nil
+}
+
+func sensorList(sensors []sensorRec) string {
+	var out []string
+	for _, s := range sensors {
+		if s.name == s.uid {
+			out = append(out, s.uid)
+		} else {
+			out = append(out, s.name+" ("+s.uid+")")
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ", ")
 }

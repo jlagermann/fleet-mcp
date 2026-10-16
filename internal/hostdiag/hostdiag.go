@@ -75,6 +75,8 @@ CERT=$(val ssl-certificate-path)
 section service
 for u in corelight-fleetd corelight-fleetd-ldap-auth; do
   systemctl cat $u >/dev/null 2>&1 || continue
+  # Optional units (LDAP authentication) only matter when enabled.
+  [ $u = corelight-fleetd ] || [ "$(systemctl is-enabled $u 2>/dev/null)" = enabled ] || continue
   echo "$u $(systemctl show -p ActiveState --value $u) $(systemctl show -p SubState --value $u) restarts=$(systemctl show -p NRestarts --value $u) since=$(systemctl show -p ActiveEnterTimestamp --value $u | tr ' ' '_')"
 done
 section version
@@ -102,6 +104,12 @@ section ports
 ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ':(443|1443)$' | sort -u
 section time
 timedatectl show -p NTPSynchronized -p Timezone 2>/dev/null
+for d in ntpsec ntp chrony systemd-timesyncd; do [ "$(systemctl is-active $d 2>/dev/null)" = active ] && echo "daemon=$d"; done
+if command -v ntpq >/dev/null 2>&1; then
+  ntpq -c rv 2>/dev/null | grep -q sync_unspec && echo "ntpd=unsynchronized"
+  ntpq -pn 2>/dev/null | awk 'NR>2 && $9 ~ /^-?[0-9.]+$/ && $7 != "0" { o = $9 < 0 ? -$9 : $9; if (o > m) m = o } END { if (m != "") print "maxoffsetms=" m }'
+fi
+command -v chronyc >/dev/null 2>&1 && chronyc tracking 2>/dev/null | awk -F': ' '/System time/{print "chrony=" $2}'
 section perms
 for f in $C $C.* /etc/corelight-fleetd.pem* /etc/corelight-fleet-license.txt* /etc/corelight-fleet-*.ini /etc/corelight-fleet-*.toml; do
   [ -f "$f" ] || continue
@@ -362,10 +370,35 @@ func parse(out string, now time.Time) *Report {
 	}
 
 	// Time.
+	synced, daemon, ntpdBad, maxOff := true, "", false, 0.0
 	for _, l := range sec["time"] {
-		if v, ok := strings.CutPrefix(l, "NTPSynchronized="); ok && v != "yes" {
-			add("warning", "time", "the clock is not NTP-synchronized; sensor connections and certificates depend on correct time", "timedatectl; check the NTP service")
+		switch {
+		case strings.HasPrefix(l, "NTPSynchronized="):
+			synced = strings.TrimPrefix(l, "NTPSynchronized=") == "yes"
+		case strings.HasPrefix(l, "daemon="):
+			daemon = strings.TrimPrefix(l, "daemon=")
+		case l == "ntpd=unsynchronized":
+			ntpdBad = true
+		case strings.HasPrefix(l, "maxoffsetms="):
+			maxOff, _ = strconv.ParseFloat(strings.TrimPrefix(l, "maxoffsetms="), 64)
 		}
+	}
+	// timedatectl only knows systemd-timesyncd: with ntpd it says "no"
+	// even when ntpd is in sync, so ntpd's own state decides then.
+	unsynced := !synced
+	if strings.HasPrefix(daemon, "ntp") {
+		unsynced = ntpdBad
+	}
+	if unsynced || maxOff > 1000 {
+		msg := "the clock is not NTP-synchronized"
+		if daemon != "" {
+			msg += " (" + daemon + ")"
+		}
+		if maxOff > 1000 {
+			msg += fmt.Sprintf("; NTP servers see it up to %.0f seconds off", maxOff/1000)
+		}
+		add("warning", "time", msg+". Sensor connections, certificates and log times depend on a correct clock",
+			"check the NTP servers in the daemon's configuration and that the host (or hypervisor) keeps time; ntpq -pn or chronyc sources")
 	}
 
 	// Permissions.

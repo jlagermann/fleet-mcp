@@ -41,6 +41,9 @@ notAfter=Feb 27 12:00:00 2027 GMT
 0.0.0.0:443
 ### time
 NTPSynchronized=no
+daemon=ntpsec
+ntpd=unsynchronized
+maxoffsetms=67339.39
 Timezone=America/Chicago
 ### perms
 640 root:corelight-fleetd /etc/corelight-fleetd.conf
@@ -65,7 +68,7 @@ func TestParse(t *testing.T) {
 		"warning memory: only 1000 of 16000 MB memory available",
 		"warning cpu: load 9.1 on 4 CPUs",
 		"warning disk: / is 92% full",
-		"warning time: the clock is not NTP-synchronized",
+		"warning time: the clock is not NTP-synchronized (ntpsec); NTP servers see it up to 67 seconds off",
 		"warning permissions: files that may hold secrets",
 		"/etc/corelight-fleetd.conf.bak-20261009-172908 (644)",
 		"/etc/corelight-fleet-ldap.ini (644)",

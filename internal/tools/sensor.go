@@ -24,13 +24,14 @@ import (
 // fleetPort is where sensors connect to Fleet Manager.
 const fleetPort = "1443"
 
-type sensorMoveArgs struct {
+type sensorFleetArgs struct {
 	target
-	Sensor        string `json:"sensor" jsonschema:"sensor uid or name on the source Fleet Manager (fleet)"`
-	TargetFleet   string `json:"target_fleet" jsonschema:"Fleet Manager to move the sensor to (see fm_fleets)"`
-	SensorHost    string `json:"sensor_host,omitempty" jsonschema:"sensor management address for SSH (default: the address the source Fleet Manager reports)"`
-	TargetAddress string `json:"target_address,omitempty" jsonschema:"host:port the sensor uses to reach the target Fleet Manager (default: the host in its URL, port 1443)"`
-	ConfirmToken  string `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this move's preview; when it matches, the move runs"`
+	Sensor        string `json:"sensor" jsonschema:"sensor uid or name on the Fleet Manager that lists it (fleet)"`
+	Action        string `json:"action" jsonschema:"detach (turn Fleet Manager off on the sensor) or attach (connect the sensor to target_fleet)"`
+	TargetFleet   string `json:"target_fleet,omitempty" jsonschema:"attach only: the Fleet Manager to connect the sensor to (default: fleet); a different one moves the sensor (see fm_fleets)"`
+	SensorHost    string `json:"sensor_host,omitempty" jsonschema:"sensor management address for SSH (default: the address fleet reports)"`
+	TargetAddress string `json:"target_address,omitempty" jsonschema:"attach only: host:port the sensor uses to reach target_fleet (default: the host in its URL, port 1443)"`
+	ConfirmToken  string `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this action's preview; when it matches, the action runs"`
 }
 
 func (d *Deps) sensorPins() sensorssh.Pins {
@@ -85,22 +86,30 @@ func sensorAddress(s map[string]any) string {
 func registerSensorWrite(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
-		Name: "fm_sensor_move",
-		Description: guideFirst("move-sensor") + "Move a sensor from one Fleet Manager (fleet) to another (target_fleet): fleet-mcp logs in to the sensor over SSH as diag-shell (password: the sensor-admin-password secret) and runs corelight-client configuration update in three steps: fleet.enable=false (so the current Fleet Manager cannot put its fleet.server_sslname back), then the target's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
-			"The sensor keeps its configuration: it appears on the target in the UNASSIGNED group and only takes a new configuration when it is put in a sensor group with a policy. Its entry on the source Fleet Manager goes offline. " +
+		Name: "fm_sensor_fleet",
+		Description: guideFirst("move-sensor") + "Detach a sensor from Fleet Manager or attach it to one, on the sensor itself: fleet-mcp logs in over SSH as diag-shell (its own key if installed, else the sensor-admin-password secret) and runs corelight-client configuration update. " +
+			"detach: fleet.enable=false. The Fleet Manager keeps the sensor's record, group and policy and shows it offline; the sensor keeps running with its current configuration. " +
+			"attach: three steps, about 30 s apart: fleet.enable=false (so a connected Fleet Manager cannot put its fleet.server_sslname back), then target_fleet's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
+			"Attaching to the Fleet Manager that lists the sensor reconnects it to its group and policy there (also how a sensor gets a new community string); attaching to another one moves it: a sensor new to that Fleet Manager arrives in UNASSIGNED and keeps its configuration until it is put in a group with a policy, and its entry on the old one goes offline. " +
 			"Two steps: call without confirm_token for a preview (sensor, addresses, SSH host key fingerprint, which secrets are present); after the user approves, call again with the same arguments plus confirm_token.",
-		Annotations: &mcp.ToolAnnotations{Title: "Move sensor", DestructiveHint: &t, OpenWorldHint: &f},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, a sensorMoveArgs) (*mcp.CallToolResult, any, error) {
+		Annotations: &mcp.ToolAnnotations{Title: "Detach or attach sensor", DestructiveHint: &t, OpenWorldHint: &f},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a sensorFleetArgs) (*mcp.CallToolResult, any, error) {
+		attach := a.Action == "attach"
+		if !attach && a.Action != "detach" {
+			return nil, nil, fmt.Errorf("action must be detach or attach, not %q", a.Action)
+		}
+		if !attach && (a.TargetFleet != "" || a.TargetAddress != "") {
+			return nil, nil, errors.New("target_fleet and target_address are for attach only")
+		}
 		src, err := d.conn(a.Fleet)
 		if err != nil {
 			return nil, nil, err
 		}
-		tgt, err := d.conn(a.TargetFleet)
-		if err != nil {
-			return nil, nil, err
-		}
-		if src.Name == tgt.Name {
-			return nil, nil, errors.New("the sensor is already on that Fleet Manager")
+		tgt := src
+		if attach && a.TargetFleet != "" {
+			if tgt, err = d.conn(a.TargetFleet); err != nil {
+				return nil, nil, err
+			}
 		}
 		sensor, err := d.findSensor(ctx, src, a.Sensor)
 		if err != nil {
@@ -114,9 +123,11 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 		if sshHost == "" {
 			return nil, nil, fmt.Errorf("%s does not report %s's management address; give sensor_host", src.Name, name)
 		}
-		addr, err := targetAddress(tgt, a.TargetAddress)
-		if err != nil {
-			return nil, nil, err
+		addr := ""
+		if attach {
+			if addr, err = targetAddress(tgt, a.TargetAddress); err != nil {
+				return nil, nil, err
+			}
 		}
 		pins := d.sensorPins()
 		scan := metrics.Step(ctx, "read the sensor's SSH host key")
@@ -129,8 +140,11 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			return nil, nil, fmt.Errorf("%s presents SSH host key %s, which differs from the one fleet-mcp pinned earlier; if the sensor was reinstalled, remove its line from %s", sshHost, hk.Fingerprint, pins.Path)
 		}
 		login := d.sensorLogin(ctx, src, uid)
-		_, csErr := d.Secrets.GetString(tgt.Name, secrets.CommunityString)
-		token := ConfirmToken(sshHost, "fm_sensor_move", uid, src.Name, tgt.Name, addr, hk.Fingerprint)
+		var csErr error
+		if attach {
+			_, csErr = d.Secrets.GetString(tgt.Name, secrets.CommunityString)
+		}
+		token := ConfirmToken(sshHost, "fm_sensor_fleet", a.Action, uid, src.Name, tgt.Name, addr, hk.Fingerprint)
 
 		if a.ConfirmToken == "" {
 			var blockers []string
@@ -140,34 +154,50 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			if csErr != nil {
 				blockers = append(blockers, fmt.Sprintf("%s's community string is not stored; the user runs in a terminal: %s", tgt.Name, secrets.Command("secret", "set", secrets.CommunityString, "-host", tgt.Name)))
 			}
-			// A sensor new to the target lands in UNASSIGNED with no
-			// policy; one that was there before rejoins its old group.
-			toGroup, toPolicy, after := any("UNASSIGNED"), any("none"),
-				fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name)
-			if prev, err := d.findSensor(ctx, tgt, uid); err == nil {
-				toGroup, toPolicy = prev["group.name"], prev["policy.name"]
-				if toPolicy == nil || toPolicy == "" {
-					toPolicy = "none"
-				}
-				after = fmt.Sprintf("%s was on %s before and rejoins group %v there (policy %v): it takes that policy's configuration if the group has one. It goes offline on %s.", name, tgt.Name, toGroup, toPolicy, src.Name)
-			}
+			connected := d.sensorConnected(ctx, src, uid)
 			out := map[string]any{
-				"preview": true, "sensor": name, "uid": uid, "health": sensor["health.status"],
-				"from":            map[string]any{"fleet": src.Name, "group": sensor["group.name"], "policy": sensor["policy.name"]},
-				"to":              map[string]any{"fleet": tgt.Name, "group": toGroup, "policy": toPolicy},
-				"ssh":             map[string]any{"host": sshHost, "user": sensorssh.User, "host_key": hk, "login": login.Method},
-				"sensor_settings": map[string]any{"fleet.server": addr, "fleet.community_string": "(" + tgt.Name + "'s community string)", "fleet.server_sslname": ""},
-				"after":           after,
-				"ready":           len(blockers) == 0,
+				"preview": true, "action": a.Action, "sensor": name, "uid": uid, "health": sensor["health.status"],
+				"from": map[string]any{"fleet": src.Name, "group": sensor["group.name"], "policy": sensor["policy.name"], "connected": connected},
+				"ssh":  map[string]any{"host": sshHost, "user": sensorssh.User, "host_key": hk, "login": login.Method},
 			}
+			var after string
+			if attach {
+				// A sensor new to the target lands in UNASSIGNED with no
+				// policy; one the target lists rejoins its group there.
+				toGroup, toPolicy := any("UNASSIGNED"), any("none")
+				after = fmt.Sprintf("%s keeps its configuration, appears on %s in UNASSIGNED, and goes offline on %s.", name, tgt.Name, src.Name)
+				if prev, err := d.findSensor(ctx, tgt, uid); err == nil {
+					toGroup, toPolicy = prev["group.name"], prev["policy.name"]
+					if toPolicy == nil || toPolicy == "" {
+						toPolicy = "none"
+					}
+					after = fmt.Sprintf("%s rejoins group %v on %s (policy %v): it takes that policy's configuration if the group has one.", name, toGroup, tgt.Name, toPolicy)
+					if tgt.Name != src.Name {
+						after += fmt.Sprintf(" It goes offline on %s.", src.Name)
+					}
+				}
+				out["to"] = map[string]any{"fleet": tgt.Name, "group": toGroup, "policy": toPolicy}
+				out["sensor_settings"] = map[string]any{"fleet.enable": "false, then true", "fleet.server": addr, "fleet.community_string": "(" + tgt.Name + "'s community string)", "fleet.server_sslname": ""}
+			} else {
+				out["sensor_settings"] = map[string]any{"fleet.enable": false}
+				after = fmt.Sprintf("%s keeps %s's record, group and policy and shows it offline; the sensor keeps running with its current configuration and takes no changes from %s. Reattach with fm_sensor_fleet action attach.", src.Name, name, src.Name)
+				if !connected {
+					after = fmt.Sprintf("%s does not reach %s through %s now; detaching still sets fleet.enable=false so it stays off. ", name, name, src.Name) + after
+				}
+			}
+			out["after"] = after
+			out["ready"] = len(blockers) == 0
 			if len(blockers) > 0 {
 				out["blockers"] = blockers
 				out["next"] = "Have the user store the missing secrets at the hidden prompts, then preview again."
 			} else {
 				out["confirm_token"] = token
-				next := fmt.Sprintf("Show the move to the user. After they approve moving %s to %s, call fm_sensor_move again with the same arguments plus confirm_token.", name, tgt.Name)
+				next := fmt.Sprintf("Show the preview to the user. After they approve detaching %s from %s, call fm_sensor_fleet again with the same arguments plus confirm_token.", name, src.Name)
+				if attach {
+					next = fmt.Sprintf("Show the preview to the user. After they approve attaching %s to %s, call fm_sensor_fleet again with the same arguments plus confirm_token.", name, tgt.Name)
+				}
 				if !hk.Known {
-					next += " This is the first SSH contact with the sensor: ask the user to confirm the host key fingerprint " + hk.Fingerprint + "; it is pinned when the move runs."
+					next += " This is the first SSH contact with the sensor: ask the user to confirm the host key fingerprint " + hk.Fingerprint + "; it is pinned when the action runs."
 				}
 				out["next"] = next
 			}
@@ -183,15 +213,25 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 		if csErr != nil {
 			return nil, nil, csErr
 		}
-		cs, _ := d.Secrets.GetString(tgt.Name, secrets.CommunityString)
-		output, runErr := moveSteps(ctx, sshHost, login.Auth, hk.Fingerprint, pins, cs, addr, stepPause)
-
-		out := map[string]any{"executed": true, "sensor": name, "uid": uid, "from": src.Name, "to": tgt.Name, "output": output}
-		if runErr == nil {
-			out["on_target"] = d.waitForSensor(ctx, tgt, uid, 3*time.Minute)
+		cs := ""
+		if attach {
+			cs, _ = d.Secrets.GetString(tgt.Name, secrets.CommunityString)
 		}
-		rec := audit.Record{Fleet: tgt.Name, User: sensorssh.User + "@" + sshHost, Tool: "fm_sensor_move", Token: token,
-			Body: map[string]any{"sensor": name, "uid": uid, "from": src.Name, "to": tgt.Name, "fleet.server": addr}, Response: output}
+		output, runErr := runSteps(ctx, sshHost, login.Auth, hk.Fingerprint, pins, fleetSteps(a.Action, cs, addr), stepPause, cs)
+
+		out := map[string]any{"executed": true, "action": a.Action, "sensor": name, "uid": uid, "fleet": src.Name, "output": output}
+		body := map[string]any{"action": a.Action, "sensor": name, "uid": uid, "fleet": src.Name}
+		if attach {
+			out["to"], body["to"], body["fleet.server"] = tgt.Name, tgt.Name, addr
+		}
+		if runErr == nil {
+			if attach {
+				out["on_target"] = d.waitForSensor(ctx, tgt, uid, 3*time.Minute)
+			} else {
+				out["on_fleet"] = d.waitForDisconnect(ctx, src, uid, 2*time.Minute)
+			}
+		}
+		rec := audit.Record{Fleet: tgt.Name, User: sensorssh.User + "@" + sshHost, Tool: "fm_sensor_fleet", Token: token, Body: body, Response: output}
 		if runErr != nil {
 			rec.Error = runErr.Error()
 			out["error"] = runErr.Error()
@@ -209,12 +249,17 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 	})
 }
 
-// waitForSensor polls until the sensor has connected to the target. Fleet
-// Manager never connects to sensors: each sensor opens the connection and
-// Fleet Manager's sensor proxy rides on it, so a proxied call that
-// succeeds proves the sensor's connection is up. A target that knew the
-// sensor before still lists it while it is offline, so being listed alone
-// proves nothing.
+// sensorConnected reports whether the sensor's connection to Fleet Manager
+// c is up. Fleet Manager never connects to sensors: each sensor opens the
+// connection and the sensor proxy rides on it, so a proxied call that
+// succeeds proves it is up. Fleet Manager keeps listing a sensor while it
+// is offline, so being listed alone proves nothing.
+func (d *Deps) sensorConnected(ctx context.Context, c *fleets.Conn, uid string) bool {
+	var cfg map[string]any
+	return c.Client.GetJSON(ctx, "/fleet/v1/sensor/instance/"+uid+"/api/configuration", nil, &cfg) == nil
+}
+
+// waitForSensor polls until the sensor has connected to the target.
 func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, limit time.Duration) map[string]any {
 	defer metrics.Step(ctx, "wait for the sensor to connect to %s", c.Name)()
 	deadline := time.Now().Add(limit)
@@ -235,7 +280,27 @@ func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, li
 		}
 		select {
 		case <-ctx.Done():
-			return map[string]any{"present": false, "note": ctx.Err().Error()}
+			return map[string]any{"connected": false, "note": ctx.Err().Error()}
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// waitForDisconnect polls until Fleet Manager c can no longer reach the
+// sensor through its proxy.
+func (d *Deps) waitForDisconnect(ctx context.Context, c *fleets.Conn, uid string, limit time.Duration) map[string]any {
+	defer metrics.Step(ctx, "wait for the sensor to disconnect from %s", c.Name)()
+	deadline := time.Now().Add(limit)
+	for {
+		if !d.sensorConnected(ctx, c, uid) {
+			return map[string]any{"connected": false}
+		}
+		if time.Now().After(deadline) {
+			return map[string]any{"connected": true, "note": fmt.Sprintf("%s still reaches the sensor after %s; check fm_sensors_list again shortly", c.Name, limit)}
+		}
+		select {
+		case <-ctx.Done():
+			return map[string]any{"connected": true, "note": ctx.Err().Error()}
 		case <-time.After(10 * time.Second):
 		}
 	}
@@ -245,18 +310,29 @@ func (d *Deps) waitForSensor(ctx context.Context, c *fleets.Conn, uid string, li
 // client returns while the change is still in progress.
 var stepPause = 30 * time.Second
 
-// moveSteps re-points a sensor in three steps. Disconnecting first matters:
-// fleet.server_sslname comes from the Fleet Manager's license and the
-// connected Fleet Manager would put its own value back. With fleet
-// disabled, the cleared value stays cleared until the sensor connects to
-// the new Fleet Manager, which then sets its own.
-func moveSteps(ctx context.Context, sshHost string, auth sensorssh.Auth, fingerprint string, pins sensorssh.Pins, cs, addr string, pause time.Duration) (string, error) {
-	steps := []struct{ label, cmd string }{
-		{"disconnect from the current Fleet Manager", "corelight-client configuration update --fleet.enable=false"},
-		{"point at the new Fleet Manager", "corelight-client configuration update --fleet.community_string=" + host.Quote(cs) +
-			" --fleet.server=" + host.Quote(addr) + " --fleet.server_sslname=''"},
-		{"connect to the new Fleet Manager", "corelight-client configuration update --fleet.enable=true"},
+type sensorStep struct{ label, cmd string }
+
+// fleetSteps are the corelight-client commands for detach or attach.
+// Attach disconnects first: fleet.server_sslname comes from the Fleet
+// Manager's license and a connected Fleet Manager would put its own value
+// back. With fleet disabled, the cleared value stays cleared until the
+// sensor connects, and that Fleet Manager then sets its own.
+func fleetSteps(action, cs, addr string) []sensorStep {
+	disable := sensorStep{"disconnect from Fleet Manager", "corelight-client configuration update --fleet.enable=false"}
+	if action == "detach" {
+		return []sensorStep{disable}
 	}
+	return []sensorStep{
+		disable,
+		{"point at the Fleet Manager", "corelight-client configuration update --fleet.community_string=" + host.Quote(cs) +
+			" --fleet.server=" + host.Quote(addr) + " --fleet.server_sslname=''"},
+		{"connect to the Fleet Manager", "corelight-client configuration update --fleet.enable=true"},
+	}
+}
+
+// runSteps runs the steps over SSH, pausing between them. Secrets are
+// masked in the returned output.
+func runSteps(ctx context.Context, sshHost string, auth sensorssh.Auth, fingerprint string, pins sensorssh.Pins, steps []sensorStep, pause time.Duration, secrets ...string) (string, error) {
 	var log strings.Builder
 	for i, s := range steps {
 		if i > 0 {
@@ -270,7 +346,7 @@ func moveSteps(ctx context.Context, sshHost string, auth sensorssh.Auth, fingerp
 		}
 		fmt.Fprintf(&log, "step %d: %s\n", i+1, s.label)
 		stepDone := metrics.Step(ctx, "SSH step %d: %s", i+1, s.label)
-		out, err := sensorssh.Run(ctx, sshHost, auth, fingerprint, s.cmd, pins, cs, auth.Password)
+		out, err := sensorssh.Run(ctx, sshHost, auth, fingerprint, s.cmd, pins, append(secrets, auth.Password)...)
 		stepDone()
 		log.WriteString(out)
 		if err != nil {
@@ -326,7 +402,17 @@ func (d *Deps) sensorLogin(ctx context.Context, c *fleets.Conn, uid string) sens
 	if err != nil {
 		return l
 	}
-	if have, err := d.installedKey(ctx, c, uid); err == nil && keyBody(have) == keyBody(pub) {
+	have, err := d.installedKey(ctx, c, uid)
+	switch {
+	case err != nil:
+		// A detached sensor cannot be asked through Fleet Manager; try the
+		// key anyway, with the password after it.
+		l.Auth.KeyPath = d.sensorKeyPath()
+		l.Method = "key (unverified: " + c.Name + " cannot reach the sensor)"
+		if l.Auth.Password != "" {
+			l.Method += " or password"
+		}
+	case keyBody(have) == keyBody(pub):
 		l.Auth.KeyPath = d.sensorKeyPath()
 		l.Method = "key"
 		if l.Auth.Password != "" {
@@ -346,7 +432,7 @@ func registerSensorKeyWrite(s *mcp.Server, d *Deps) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_ssh_key",
-		Description: "Install fleet-mcp's own SSH public key on a sensor, as that sensor's individual setting " + sensorAdminKey + " on its Fleet Manager, so fleet-mcp can log in as diag-shell (e.g. for fm_sensor_move) without the admin password. The key pair is created on first use and the private key stays in fleet-mcp's secret store. " +
+		Description: "Install fleet-mcp's own SSH public key on a sensor, as that sensor's individual setting " + sensorAdminKey + " on its Fleet Manager, so fleet-mcp can log in as diag-shell (e.g. for fm_sensor_fleet) without the admin password. The key pair is created on first use and the private key stays in fleet-mcp's secret store. " +
 			"The sensor holds a single admin key: a different key already set is only replaced with replace: true. Two steps: preview, then confirm_token after the user approves.",
 		Annotations: &mcp.ToolAnnotations{Title: "Install SSH key on sensor", DestructiveHint: &f, OpenWorldHint: &f},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a keyArgs) (*mcp.CallToolResult, any, error) {
@@ -422,7 +508,7 @@ func registerSensorKeyWrite(s *mcp.Server, d *Deps) {
 			rec.Status = resp.Status
 		}
 		out := map[string]any{"executed": true, "fleet": c.Name, "sensor": name, sensorAdminKey: pub,
-			"next": "The sensor applies the change within about a minute; fm_sensor_move then logs in with the key."}
+			"next": "The sensor applies the change within about a minute; fm_sensor_fleet then logs in with the key."}
 		if runErr != nil {
 			rec.Error = runErr.Error()
 			out["error"] = runErr.Error()

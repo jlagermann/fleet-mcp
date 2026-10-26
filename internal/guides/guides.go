@@ -52,9 +52,9 @@ var all = []Guide{
 	{"maintain-fleet-manager", "Maintain a Fleet Manager host",
 		"Check, reconfigure, renew certificates and licenses on, back up and upgrade an installed Fleet Manager host.",
 		"before fm_host_configure or fm_host_upgrade, or when a Fleet Manager certificate or license is expiring"},
-	{"move-sensor", "Move a sensor",
-		"Move a sensor from one Fleet Manager to another.",
-		"before fm_sensor_move"},
+	{"move-sensor", "Detach, attach or move a sensor",
+		"Detach a sensor from Fleet Manager, attach it again, or move it to another Fleet Manager.",
+		"before fm_sensor_fleet"},
 }
 
 // All returns every guide, in a fixed order.

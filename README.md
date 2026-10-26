@@ -27,7 +27,7 @@ The 46 tools:
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
 | Suricata ruleset test (read-only, over SSH on a host you name) | 1 | `fm_suricata_test` |
-| Changes (only with writes enabled; preview, then confirm) | 17 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
+| Changes (only with writes enabled; preview, then confirm) | 17 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -119,7 +119,7 @@ Permission rules for approving each change, in `~/.claude/settings.json`:
       "mcp__fleet-mcp__fm_group_manage",
       "mcp__fleet-mcp__fm_content_push",
       "mcp__fleet-mcp__fm_suricata_modify",
-      "mcp__fleet-mcp__fm_sensor_move",
+      "mcp__fleet-mcp__fm_sensor_fleet",
       "mcp__fleet-mcp__fm_sensor_ssh_key",
       "mcp__fleet-mcp__fm_sensor_action",
       "mcp__fleet-mcp__fm_sensor_support_access"
@@ -411,20 +411,25 @@ Disable SIDs 2013028 and 2013504 in the Lab Suricata policy on the lab Fleet Man
 
 The `build-package-bundle` guide walks through building a bundle with `zkg bundle` (for example in the `zeek/zeek` Docker image matching the sensors' Zeek). It then pushes the bundle with `fm_content_push` and enables new packages in the sensor policy.
 
-## Move a sensor to another Fleet Manager
+## Detach, attach or move a sensor
 
-Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), so `fm_sensor_move` logs in to the sensor over SSH as `diag-shell` and runs `corelight-client configuration update` in three steps, about 30 seconds apart:
+Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), and deleting a sensor from Fleet Manager does not stop it from connecting again. So `fm_sensor_fleet` works on the sensor itself: it logs in over SSH as `diag-shell` and runs `corelight-client configuration update`.
 
-1. `--fleet.enable=false`: disconnect from the current Fleet Manager, so it cannot put its `fleet.server_sslname` back.
-2. `--fleet.community_string=<target's> --fleet.server=<target host>:1443 --fleet.server_sslname=''`: `server_sslname` comes from each Fleet Manager's license, which may differ, so it is cleared; the new Fleet Manager sets its own when the sensor connects.
-3. `--fleet.enable=true`: connect to the new Fleet Manager.
+- **`detach`** runs `--fleet.enable=false`. The Fleet Manager keeps the sensor's record, group and policy and shows it offline; the sensor keeps running with its current configuration. Use it to borrow a sensor for a test without losing its place.
+- **`attach`** connects the sensor to `target_fleet` (default: the Fleet Manager that lists it) in three steps, about 30 seconds apart:
+  1. `--fleet.enable=false`: disconnect, so a connected Fleet Manager cannot put its `fleet.server_sslname` back.
+  2. `--fleet.community_string=<target's> --fleet.server=<target host>:1443 --fleet.server_sslname=''`: `server_sslname` comes from each Fleet Manager's license, which may differ, so it is cleared; the Fleet Manager sets its own when the sensor connects.
+  3. `--fleet.enable=true`: connect.
 
-- The sensor address comes from the source Fleet Manager; the target's community string from the secret store (stored by fleet-mcp's install, or `fleet-mcp secret set community-string -host <fleet>`).
-- Login as `diag-shell`: with fleet-mcp's own SSH key when it is installed on the sensor (`fm_sensor_ssh_key` sets it as the sensor's individual setting `security.user.admin.ssh_public_key` through its Fleet Manager; the sensor holds one admin key, so an existing different key is only replaced on request), otherwise with the `admin` password, stored once with `fleet-mcp secret set sensor-admin-password`.
+  Attaching to the same Fleet Manager reattaches a detached sensor to its group and policy, or gives it a new community string. Attaching to another Fleet Manager moves it: there it appears in UNASSIGNED and changes only when you put it in a sensor group with a policy, and its entry on the old Fleet Manager goes offline.
+
+- The sensor address comes from the Fleet Manager that lists it; the target's community string from the secret store (stored by fleet-mcp's install, or `fleet-mcp secret set community-string -host <fleet>`).
+- Login as `diag-shell`: with fleet-mcp's own SSH key when it is installed on the sensor (`fm_sensor_ssh_key` sets it as the sensor's individual setting `security.user.admin.ssh_public_key` through its Fleet Manager; the sensor holds one admin key, so an existing different key is only replaced on request), otherwise with the `admin` password, stored once with `fleet-mcp secret set sensor-admin-password`. A detached sensor cannot be asked through Fleet Manager whether it has the key, so the key is tried first and the password after it.
 - On first contact the preview shows the sensor's SSH host key fingerprint; it is pinned when you confirm, and a changed key is refused.
-- The sensor keeps its configuration: it appears on the target in UNASSIGNED and changes only when you put it in a sensor group with a policy. Its entry on the source goes offline.
 
 ```text
+Detach Lab-Sensor6 from prod; I need it for a test.
+Attach Lab-Sensor6 to prod again.
 Move Lab-Sensor6 from prod to lab.
 ```
 
@@ -547,7 +552,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_group_manage` | Create, change or delete a sensor group: name, policy and member sensors, with each sensor's group and policy before and after and license warnings (writes enabled; preview, then confirm) |
 | `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
-| `fm_sensor_move` | Move a sensor to another Fleet Manager over SSH as diag-shell (writes enabled; preview, then confirm) |
+| `fm_sensor_fleet` | Detach a sensor from Fleet Manager, attach it again, or move it to another one, over SSH as diag-shell (writes enabled; preview, then confirm) |
 | `fm_sensor_action` | Reboot a sensor, apply its pending updates, or revert its last update, over SSH as diag-shell (writes enabled; preview, then confirm) |
 | `fm_suricata_modify` | Tune single Suricata rules in Fleet Manager's rules manager: disable, enable or modify by SID or another match, remove modifiers; shows each rule before and after, waits for the rebuild and checks the rules (writes enabled; preview, then confirm) |
 | `fm_suricata_test` | Load a ruleset with a real Suricata (`suricata -T`) over SSH on a host you name: a local file, or the ruleset Fleet Manager generated for a policy, with the policy's address and port groups |
@@ -557,7 +562,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_move`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 
@@ -601,7 +606,7 @@ fleet-mcp version
 
 To show what each tool costs in time and AI tokens:
 
-- Set `FLEET_MCP_DEMO_METRICS=true` in the server's registration. Every tool result then ends with a footer: total time, a timeline (for example the 30-second pauses while a sensor applies a change during `fm_sensor_move`), Fleet Manager API calls and time, and the result's size in tokens of AI context.
+- Set `FLEET_MCP_DEMO_METRICS=true` in the server's registration. Every tool result then ends with a footer: total time, a timeline (for example the 30-second pauses while a sensor applies a change during `fm_sensor_fleet` attach), Fleet Manager API calls and time, and the result's size in tokens of AI context.
 - The model's own token use is known only to the client. `fleet-mcp report [-since <time>] [-timeline] <session.jsonl>` reads a Claude Code session transcript (`~/.claude/projects/<project>/<session>.jsonl`) and lists every fleet-mcp call with its wall time, the model's output and input tokens for the turn that made it, and the result size; `-timeline` adds the server's footers.
 
 ## Development

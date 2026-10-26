@@ -165,7 +165,7 @@ func registerHostMaint(s *mcp.Server, d *Deps) {
 		if runErr != nil {
 			out["error"] = runErr.Error()
 		} else {
-			out["next"] = "Check the host with fm_host_diagnose; after a community string change, give each sensor the new one with fm_sensor_move."
+			out["next"] = "Check the host with fm_host_diagnose; after a community string change, give each sensor the new one with fm_sensor_fleet attach."
 		}
 		var notes []string
 		if auditErr != nil {

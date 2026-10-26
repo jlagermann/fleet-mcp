@@ -254,7 +254,7 @@ func (m *Maintainer) PlanConfigure(ctx context.Context, o ConfigureOptions) (*Co
 			p.confChg = true
 			p.secrets = append(p.secrets, cs)
 			p.Changes = append(p.Changes, Change{Item: "messaging/community-string", From: "(current value)", To: "(the value stored for this host)",
-				Note: "sensors keep the old one and cannot connect until each is given the new one (fm_sensor_move to this same Fleet Manager)"})
+				Note: "sensors keep the old one and cannot connect until each is given the new one (fm_sensor_fleet attach on this same Fleet Manager)"})
 			warn("changing the community string disconnects every sensor of this Fleet Manager until each is given the new one")
 		}
 	}

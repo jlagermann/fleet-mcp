@@ -13,7 +13,7 @@ build-windows:
 test:
 	go test -race ./...
 
-# staticcheck 0.8.1 cannot read go1.27.2 export data yet; see ci.yml.
+# staticcheck 0.8.1 cannot read go1.27.x export data yet; see ci.yml.
 lint:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	go vet ./...

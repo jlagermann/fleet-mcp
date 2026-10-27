@@ -58,6 +58,9 @@ var all = []Guide{
 	{"upgrade-software-sensor", "Upgrade a Software Sensor",
 		"Upgrade a Software Sensor on its Linux host: version limits, free space, snapshot, deploy and follow-up.",
 		"before fm_softsensor_upgrade, or when the user wants to upgrade a Software Sensor"},
+	{"manage-users", "Manage Fleet Manager users",
+		"Review Fleet Manager users, roles and 2FA, and create, change, reset the 2FA of or delete a user.",
+		"before fm_user_manage, or when the user asks about Fleet Manager users, roles or 2FA"},
 }
 
 // All returns every guide, in a fixed order.

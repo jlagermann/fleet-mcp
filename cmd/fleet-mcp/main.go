@@ -100,7 +100,7 @@ func usage() {
   fleet-mcp secret set <name> [-host h]   set a token or community string at a hidden prompt
   fleet-mcp secret show <name> -host h    print a community string in your terminal (-copy: clipboard)
   fleet-mcp secret import <name> <file>   import a certificate or license file
-  fleet-mcp secret set-setting <name>    store a write-only policy setting (proxy password, S3 key, exporter token) for fm_policy_create
+  fleet-mcp secret set-setting <name>    store a write-only value: a policy setting (proxy password, S3 key, exporter token) for fm_policy_create or fm_policy_update, or a new user's initial password (fm-user:<username>) for fm_user_manage
   fleet-mcp host checklist <host>         everything to provide before an install, with status
   fleet-mcp host check <host>             check a host's readiness for Fleet Manager
   fleet-mcp host install <host> [flags]   preview an installation; add -execute to run it
@@ -360,7 +360,11 @@ func secretCmd(args []string) error {
 		if len(args) != 2 {
 			return errors.New("usage: fleet-mcp secret set-setting <name>   (e.g. network.management.proxy.password, or \"exporter:<exporter name>:hec_token\")")
 		}
-		v, err := readSecret(secrets.Spec{Name: args[1], Description: "Value for the sensor policy setting " + args[1] + " (used by fm_policy_create, then deleted)"})
+		desc := "Value for the sensor policy setting " + args[1] + " (used by fm_policy_create, then deleted)"
+		if user, ok := strings.CutPrefix(args[1], "fm-user:"); ok {
+			desc = "Initial password for the new Fleet Manager user " + user + " (used by fm_user_manage, then deleted; the user must change it at first login)"
+		}
+		v, err := readSecret(secrets.Spec{Name: args[1], Description: desc})
 		if err != nil {
 			return err
 		}

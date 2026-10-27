@@ -171,6 +171,7 @@ func Register(s *mcp.Server, d *Deps) {
 	if d.Fleets != nil {
 		registerFleets(s, d)
 		registerFleetHealth(s, d)
+		registerUsers(s, d)
 		registerPolicyDiff(s, d)
 		registerRead(s, d)
 		registerDiagnose(s, d)
@@ -183,6 +184,7 @@ func Register(s *mcp.Server, d *Deps) {
 			registerSuricataModify(s, d)
 			registerPolicyEdit(s, d)
 			registerSoftSensorUpgrade(s, d)
+			registerUserManage(s, d)
 			if d.Secrets != nil {
 				registerNewPolicyWrite(s, d)
 			}

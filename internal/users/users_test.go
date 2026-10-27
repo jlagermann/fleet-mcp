@@ -21,8 +21,30 @@ type fakeFM struct {
 	sent  []string
 }
 
-func role(id int, name, display string) map[string]any {
-	return map[string]any{"id": float64(id), "name": name, "display_name": display, "type": "predefined", "permission_actions": "a,b,c"}
+func role(id int, name, display, typ, actions string) map[string]any {
+	return map[string]any{"id": float64(id), "name": name, "display_name": display, "type": typ, "permission_actions": actions}
+}
+
+// testRoles are predefined roles with a few of their real actions, and a
+// custom one.
+func testRoles() []map[string]any {
+	return []map[string]any{
+		role(1, "global_admin", "admin", "predefined", "edit_all_users,list_all_users,edit_backups,list_sensors,edit_sensors,get_notifications"),
+		role(2, "global_viewer", "monitor", "predefined", "list_sensors,get_notifications"),
+		role(3, "global_editor", "editor", "predefined", "list_sensors,edit_sensors,get_notifications"),
+		role(7, "sensor_ops", "sensor_ops", "custom", "list_sensors,edit_sensors,edit_backups"),
+	}
+}
+
+// testCatalog is a slice of /fleet/v1/roles/all_actions.
+var testCatalog = []any{
+	map[string]any{"category": "Users", "actions": []any{
+		map[string]any{"action": "list_all_users", "display": "List All Users"},
+		map[string]any{"action": "edit_all_users", "display": "Edit All Users"}}},
+	map[string]any{"category": "Backup", "actions": []any{map[string]any{"action": "edit_backups", "display": "Edit Backups"}}},
+	map[string]any{"category": "Sensors", "actions": []any{
+		map[string]any{"action": "list_sensors", "display": "List Sensors"},
+		map[string]any{"action": "edit_sensors", "display": "Edit Sensors"}}},
 }
 
 func user(id, name string, roleID int, enabled, enrolled bool) map[string]any {
@@ -35,7 +57,7 @@ func user(id, name string, roleID int, enabled, enrolled bool) map[string]any {
 
 func newFake() *fakeFM {
 	return &fakeFM{
-		roles: []map[string]any{role(1, "global_admin", "admin"), role(2, "global_viewer", "monitor"), role(3, "global_editor", "editor")},
+		roles: testRoles(),
 		users: []map[string]any{
 			user("u-claude", "claude", 1, false, false),
 			user("u-alice", "alice", 1, true, true),
@@ -59,6 +81,8 @@ func (f *fakeFM) GetJSON(_ context.Context, path string, _ url.Values, out any) 
 		return roundTrip(f.users, out)
 	case rolesPath:
 		return roundTrip(map[string]any{"roles": f.roles}, out)
+	case allActionsPath:
+		return roundTrip(testCatalog, out)
 	case providersPath:
 		return roundTrip(map[string]any{"providers": []any{map[string]any{"id": "ldap", "type": "ldap", "enable": false, "role_mappings": []any{}}}}, out)
 	}
@@ -122,7 +146,11 @@ func (f *fakeFM) Do(_ context.Context, method, path string, _ url.Values, body [
 		}
 		if rs, ok := b["roles"].([]any); ok && len(rs) == 1 {
 			rid := int(rs[0].(map[string]any)["id"].(float64))
-			u["roles"] = user("", "", rid, false, false)["roles"]
+			for _, ro := range f.roles {
+				if int(ro["id"].(float64)) == rid {
+					u["roles"] = []any{map[string]any{"id": ro["id"], "name": ro["name"], "display_name": ro["display_name"]}}
+				}
+			}
 			u["is_fleet_admin"] = rid == 1
 		}
 		u["id"] = id
@@ -198,7 +226,7 @@ func TestList(t *testing.T) {
 	if self == nil || self.Username != "claude" {
 		t.Error("fleet-mcp's account not marked")
 	}
-	if len(r.Roles) != 3 || r.Roles[1].Display != "monitor" || r.Roles[1].Actions != 3 {
+	if len(r.Roles) != 4 || r.Roles[1].Display != "monitor" || r.Roles[1].Actions != 2 {
 		t.Errorf("roles: %+v", r.Roles)
 	}
 	fs := joined(r.Findings)
@@ -319,6 +347,64 @@ func TestReset2FAAndDelete(t *testing.T) {
 	apply(t, f, nil, p)
 	if i, _ := f.find("u-bob"); i >= 0 {
 		t.Error("bob still there")
+	}
+}
+
+func perms(ps []Permission) string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, p.Action)
+	}
+	return strings.Join(out, ",")
+}
+
+func TestRoleChangePermissions(t *testing.T) {
+	f := newFake()
+	f.users = append(f.users, user("u-erin", "erin", 1, false, false))
+	f.users[3]["permissions"] = []any{map[string]any{"group": 5}}
+
+	// Demoting an admin lists what it loses, by category, with display names.
+	p := plan(t, f, nil, Request{Action: Update, Username: "erin", Role: "monitor"})
+	pc := p.Permissions
+	if pc == nil || pc.From != "admin" || pc.To != "monitor" || len(pc.Gained) != 0 || pc.Unchanged != 2 {
+		t.Fatalf("permission change: %+v", pc)
+	}
+	if got := perms(pc.Lost); got != "edit_backups,edit_sensors,edit_all_users,list_all_users" {
+		t.Errorf("lost %s", got)
+	}
+	if pc.Lost[0].Display != "Edit Backups" || pc.Lost[0].Category != "Backup" {
+		t.Errorf("no display name or category: %+v", pc.Lost[0])
+	}
+	w := joined(p.Warnings)
+	for _, want := range []string{"role admin → monitor: erin gains 0 and loses 4 permissions, 2 stay", "no longer be able to: manage users and their roles; create and restore backups; change sensors", "1 per-group permission(s); they stay"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warnings lack %q:\n%s", want, w)
+		}
+	}
+
+	// A custom role: gains and losses both ways.
+	p = plan(t, f, nil, Request{Action: Update, Username: "bob", Role: "sensor_ops"})
+	if got, lost := perms(p.Permissions.Gained), perms(p.Permissions.Lost); got != "edit_backups,edit_sensors" || lost != "get_notifications" {
+		t.Errorf("custom role: gained %s lost %s", got, lost)
+	}
+	if w := joined(p.Warnings); !strings.Contains(w, "custom (custom) role") || !strings.Contains(w, "will be able to: create and restore backups; change sensors") {
+		t.Errorf("custom role warnings:\n%s", w)
+	}
+	if c := p.Permissions.Lost[0].Category; c != notInCatalog {
+		t.Errorf("action missing from the catalog has category %q", c)
+	}
+	apply(t, f, nil, p)
+
+	// A create lists every permission the role grants.
+	sec := fakeSecrets{DefaultPasswordSetting("fay"): "Initial-Pass-1"}
+	p = plan(t, f, sec, Request{Action: Create, Username: "fay", Role: "editor"})
+	if p.Permissions == nil || len(p.Permissions.Gained) != 3 || len(p.Permissions.Lost) != 0 {
+		t.Errorf("create permissions: %+v", p.Permissions)
+	}
+
+	// No role change, no permission change.
+	if p := plan(t, f, nil, Request{Action: Update, Username: "alice", FirstName: ptr("Al")}); p.Permissions != nil {
+		t.Errorf("permission change without a role change: %+v", p.Permissions)
 	}
 }
 

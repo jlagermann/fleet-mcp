@@ -428,7 +428,7 @@ It also times synchronous writes on `/var/lib` and warns when they average 10 ms
 `fm_user_manage` changes one user, by **username**: the Fleet Manager API addresses users only by their id (a username in `/fleet/v1/users/{id}` gives 404 "User not found"), so the tool looks it up.
 
 - **create** with a role, names and `require_2fa`. The initial password is stored at a hidden prompt (`fleet-mcp secret set-setting fm-user:<username>`), never typed in the chat, and deleted once the user exists; the new user must change it at first login.
-- **update** the role, names or `require_2fa`. Fleet Manager's `PUT` may reset what it is not sent, and the user's settings hold the 2FA enrollment, so the tool sends back everything it read with only the change applied.
+- **update** the role, names or `require_2fa`. A role change (and a create) previews the permissions gained, lost and kept, by category with Fleet Manager's display names, from the roles' own permission lists, so custom roles are covered; sensitive ones (managing users, login providers, backups, secrets, sensors, policies) are called out. Fleet Manager's `PUT` may reset what it is not sent, and the user's settings hold the 2FA enrollment, so the tool sends back everything it read with only the change applied.
 - **reset_2fa** for a user who lost their authenticator app: they enroll again at the next login, and Fleet Manager also asks for a new password.
 - **delete**.
 

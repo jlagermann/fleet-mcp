@@ -103,7 +103,7 @@ func registerUserManage(s *mcp.Server, d *Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_user_manage",
 		Description: guideFirst("manage-users") + "Create, update (role, name, require 2FA), reset the 2FA of, or delete one Fleet Manager user, by username (fleet-mcp looks up the id the API needs). " +
-			"Updates send back every field Fleet Manager returned with only the change applied, so 2FA enrollment and permissions are kept. A new user's initial password comes from a secret the user stores at a hidden prompt (fleet-mcp secret set-setting), never from the chat, and must be changed at first login. " +
+			"A role change (and a create) previews the permissions gained and lost, from the roles' own permission lists, so custom roles are covered. Updates send back every field Fleet Manager returned with only the change applied, so 2FA enrollment and permissions are kept. A new user's initial password comes from a secret the user stores at a hidden prompt (fleet-mcp secret set-setting), never from the chat, and must be changed at first login. " +
 			"Refuses to delete or demote the last admin or fleet-mcp's own account, and to turn on 2FA for fleet-mcp's own account. " +
 			"Two steps: call without confirm_token for a preview; after the user approves, call again with the same arguments plus confirm_token.",
 		Annotations: &mcp.ToolAnnotations{Title: "Manage Fleet Manager user", DestructiveHint: &t, OpenWorldHint: &t},

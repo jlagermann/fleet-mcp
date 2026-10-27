@@ -52,9 +52,11 @@ type Plan struct {
 	ID       string   `json:"id,omitempty"`
 	Current  *Summary `json:"current,omitempty"`
 	Changes  []Change `json:"changes,omitempty"`
-	Steps    []string `json:"steps,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
-	Blockers []string `json:"blockers,omitempty"`
+	// Permissions lists what a role change grants and takes away.
+	Permissions *PermissionChange `json:"permission_changes,omitempty"`
+	Steps       []string          `json:"steps,omitempty"`
+	Warnings    []string          `json:"warnings,omitempty"`
+	Blockers    []string          `json:"blockers,omitempty"`
 
 	body      map[string]any
 	pwSetting string
@@ -141,6 +143,16 @@ func PlanChange(ctx context.Context, c Client, sec Secrets, self string, r Reque
 	default:
 		return nil, fmt.Errorf("action must be create, update, reset_2fa or delete")
 	}
+	if (r.Action == Create || r.Action == Update) && hasChange(p, "role") {
+		if ro := st.findRole(r.Role); ro != nil {
+			var old []map[string]any
+			groupPerms := 0
+			if r.Action == Update {
+				old, groupPerms = roleList(u), p.Current.GroupPermissions
+			}
+			describeRoleChange(ctx, c, st, p, old, ro, groupPerms)
+		}
+	}
 	if len(p.Changes) == 0 && len(p.Blockers) == 0 {
 		p.nothing = true
 	}
@@ -170,7 +182,7 @@ func planCreate(st *state, sec Secrets, r Request, p *Plan, existing map[string]
 			body["roles"] = []any{map[string]any{"id": ro["id"]}}
 			p.Changes = append(p.Changes, Change{Field: "role", To: str(ro["display_name"])})
 			if str(ro["name"]) == adminRole {
-				p.warn("admin can manage users, backups, secrets and every sensor; give it only to people who administer Fleet Manager")
+				p.warn("give the admin role only to people who administer Fleet Manager")
 			}
 		}
 	}
@@ -233,7 +245,7 @@ func planUpdate(st *state, r Request, p *Plan, u map[string]any, isSelf, lastAdm
 				p.block("%s is the only admin; demoting it would leave nobody who can manage users", p.Username)
 			}
 			if str(ro["name"]) == adminRole {
-				p.warn("admin can manage users, backups, secrets and every sensor")
+				p.warn("give the admin role only to people who administer Fleet Manager")
 			}
 		}
 	}

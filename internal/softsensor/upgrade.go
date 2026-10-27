@@ -73,6 +73,10 @@ type Plan struct {
 	Steps       []string `json:"steps,omitempty"`
 	Warnings    []string `json:"warnings,omitempty"`
 	Blockers    []string `json:"blockers,omitempty"`
+	// bootID and lastRun tie the confirm token to this boot of the host
+	// and its latest upgrade run, so a token does not survive a reboot, a
+	// VM snapshot revert or another run.
+	bootID, lastRun string
 }
 
 // Ready reports whether there is something to do and nothing blocks it.
@@ -82,7 +86,7 @@ func (p *Plan) Ready() bool {
 
 // State identifies what the plan was built from.
 func (p *Plan) State() string {
-	return fmt.Sprintf("%s|%s|%s|%t", p.Installed, p.Running, p.Target, p.DeployOnly)
+	return fmt.Sprintf("%s|%s|%s|%t|%s|%s", p.Installed, p.Running, p.Target, p.DeployOnly, p.bootID, p.lastRun)
 }
 
 // facts reads everything the plan needs in one SSH call. apt-get update
@@ -91,6 +95,8 @@ func (p *Plan) State() string {
 const facts = `export DEBIAN_FRONTEND=noninteractive
 . /etc/os-release 2>/dev/null
 echo "os=${ID:-unknown} ${VERSION_ID:-}|${PRETTY_NAME:-}"
+echo "bootid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+echo "lastrun=$(head -n 1 ` + stateFile + ` 2>/dev/null)"
 command -v apt-get >/dev/null 2>&1 && echo "apt=yes"
 dpkg-query -W -f='pkg=${Package}|${db:Status-Abbrev}|${Version}\n' 'corelight*' 2>/dev/null
 [ -f ` + oldRepo + ` ] && echo "oldrepo=yes"
@@ -144,6 +150,10 @@ func (s *Planner) Plan(ctx context.Context, o Options, running string) (*Plan, e
 		switch k {
 		case "os":
 			osID, p.OS, _ = strings.Cut(v, "|")
+		case "bootid":
+			p.bootID = v
+		case "lastrun":
+			p.lastRun = v
 		case "apt":
 			apt = true
 		case "pkg":
@@ -209,7 +219,7 @@ func (s *Planner) Plan(ctx context.Context, o Options, running string) (*Plan, e
 		warn("%s is mode %s, readable by every local user, and holds the Fleet Manager community string and pairing token; consider chmod 600", ctlYAML, yaml)
 	}
 	if p.SyncWriteMs >= slowSyncMs {
-		warn("slow storage: a synchronous 4 KiB write on /var/lib takes %.1f ms on average (etcd, the sensor's Kubernetes datastore, wants under %d ms). The deploy can then miss corelightctl's fixed 5- and 15-minute waits and fail with exit 3 (no rollback); faster storage avoids it. If it happens and rke2-server keeps running, wait until the host is idle and run this tool again: the preview offers the deploy only", p.SyncWriteMs, slowSyncMs)
+		warn("slow storage: a synchronous 4 KiB write on /var/lib takes %.1f ms on average (etcd, the sensor's Kubernetes datastore, wants under %d ms). The deploy can then miss corelightctl's fixed 5- and 15-minute waits and fail with exit 3 (no rollback); faster storage avoids it. On a VM, also check for snapshots: with one, every write goes to a growing delta file and reads may pass through several files, so old snapshots slow the deploy further (in testing, removing a snapshot chain cut a run by about 10%%). Delete the ones no longer needed and keep only a fresh pre-upgrade snapshot. If it happens and rke2-server keeps running, wait until the host is idle and run this tool again: the preview offers the deploy only", p.SyncWriteMs, slowSyncMs)
 	}
 	if firewalld == "active" {
 		warn("firewalld is running; the installation guide says to stop and disable it on a Software Sensor host")

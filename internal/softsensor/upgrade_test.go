@@ -152,6 +152,31 @@ func TestPlanWarnsAndBlocksOnHost(t *testing.T) {
 	}
 }
 
+// TestStateChangesWithBootAndRun checks that the plan state behind the
+// confirm token changes after a reboot (or VM snapshot revert) and after
+// another upgrade run, although the versions are the same.
+func TestStateChangesWithBootAndRun(t *testing.T) {
+	state := func(extra string) string {
+		p, f := planner("60000")
+		f.rules[0][1] = strings.ReplaceAll(sampleFacts, "%FREE%", "60000") + extra
+		plan, err := p.Plan(context.Background(), Options{MaxVersion: "29.2.2"}, "29.0.6")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan.State()
+	}
+	a := state("bootid=aaaa\nlastrun=\n")
+	if a != state("bootid=aaaa\nlastrun=\n") {
+		t.Error("state differs for the same host facts")
+	}
+	if a == state("bootid=bbbb\nlastrun=\n") {
+		t.Error("state unchanged after a reboot")
+	}
+	if a == state("bootid=aaaa\nlastrun=2026-10-27T15:03:05Z queued\n") {
+		t.Error("state unchanged after an upgrade run")
+	}
+}
+
 func TestPlanWarnsOnSlowStorage(t *testing.T) {
 	for _, c := range []struct {
 		syncus string
@@ -167,7 +192,11 @@ func TestPlanWarnsOnSlowStorage(t *testing.T) {
 		if plan.SyncWriteMs != c.ms {
 			t.Errorf("syncus=%s: sync_write_ms %v, want %v", c.syncus, plan.SyncWriteMs, c.ms)
 		}
-		if got := strings.Contains(strings.Join(plan.Warnings, "\n"), "synchronous 4 KiB write"); got != c.warn {
+		w := strings.Join(plan.Warnings, "\n")
+		if c.warn && !strings.Contains(w, "check for snapshots") {
+			t.Errorf("syncus=%s: slow-storage warning lacks the snapshot advice:\n%s", c.syncus, w)
+		}
+		if got := strings.Contains(w, "synchronous 4 KiB write"); got != c.warn {
 			t.Errorf("syncus=%s: slow-storage warning %v, want %v", c.syncus, got, c.warn)
 		}
 	}

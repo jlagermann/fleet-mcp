@@ -130,6 +130,18 @@ func TestAPIWritePreviewConfirm(t *testing.T) {
 		t.Fatalf("bodies = %v", bodies)
 	}
 
+	// The token works once: a second confirmation needs a new preview.
+	if out, isErr := call(t, cs, "fm_api_write", args); !isErr || !strings.Contains(out, "already used") {
+		t.Fatalf("token reused: %s", out)
+	}
+	if n := countPrefix(fm.BodyLog(), "PUT "); n != 1 {
+		t.Fatalf("reused token sent %d PUTs", n)
+	}
+	preview(t, cs, "fm_api_write", map[string]any{"method": args["method"], "path": args["path"], "body": args["body"]})
+	if out, isErr := call(t, cs, "fm_api_write", args); isErr {
+		t.Fatalf("confirm after a new preview: %s", out)
+	}
+
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)

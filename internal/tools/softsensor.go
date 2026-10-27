@@ -130,7 +130,7 @@ func registerSoftSensorUpgrade(s *mcp.Server, d *Deps) {
 			case !plan.Ready():
 				out["next"] = "Nothing to install."
 			default:
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the versions, steps and warnings to the user, and suggest a VM snapshot or host backup first. After the user approves, call fm_softsensor_upgrade again with the same arguments plus confirm_token (sensor %s, managed by %s).", name, c.Name)
 			}
 			res, err := jsonResult(out)
@@ -138,6 +138,9 @@ func registerSoftSensorUpgrade(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the sensor changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		runErr := p.Start(ctx, plan)
 		body := map[string]any{"sensor": name, "uid": uid, "from": plan.Installed, "to": plan.Target, "deploy_only": plan.DeployOnly}

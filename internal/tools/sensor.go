@@ -191,7 +191,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 				out["blockers"] = blockers
 				out["next"] = "Have the user store the missing secrets at the hidden prompts, then preview again."
 			} else {
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				next := fmt.Sprintf("Show the preview to the user. After they approve detaching %s from %s, call fm_sensor_fleet again with the same arguments plus confirm_token.", name, src.Name)
 				if attach {
 					next = fmt.Sprintf("Show the preview to the user. After they approve attaching %s to %s, call fm_sensor_fleet again with the same arguments plus confirm_token.", name, tgt.Name)
@@ -206,6 +206,9 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the sensor's host key; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		if login.Method == "" {
 			return nil, nil, errors.New("no SSH key or password to log in to the sensor with; preview again")
@@ -471,7 +474,7 @@ func registerSensorKeyWrite(s *mcp.Server, d *Deps) {
 				} else {
 					out["new"] = "(a new ed25519 key pair is created when this runs)"
 				}
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the change to the user. After they approve setting %s on %s (on %s), call again with the same arguments plus confirm_token.", sensorAdminKey, name, c.Name)
 			}
 			r, err := jsonResult(out)
@@ -479,6 +482,9 @@ func registerSensorKeyWrite(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the sensor's current key; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		if installed {
 			return nil, nil, errors.New("fleet-mcp's key is already installed")

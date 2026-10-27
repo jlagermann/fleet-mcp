@@ -25,7 +25,7 @@ func (f editFlow) previewResult() (*mcp.CallToolResult, any, error) {
 	out := map[string]any{"preview": true, "fleet": f.fleet, "ready": f.ready, "plan": f.preview}
 	switch {
 	case f.ready:
-		out["confirm_token"] = f.token
+		out["confirm_token"] = issueToken(f.token)
 		out["next"] = f.nextReady
 	case len(f.blockers) > 0:
 		out["next"] = "Explain the blockers to the user and preview again with corrected arguments."
@@ -98,6 +98,9 @@ func registerPolicyEdit(s *mcp.Server, d *Deps) {
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match: the arguments or the policy changed since the preview; preview again")
 		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
+		}
 		res, runErr := policyedit.ApplyUpdate(ctx, c.Client, plan)
 		if runErr == nil {
 			for _, k := range a.SecretSettings {
@@ -140,6 +143,9 @@ func registerPolicyEdit(s *mcp.Server, d *Deps) {
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match: the arguments or the policy changed since the preview; preview again")
 		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
+		}
 		res, runErr := policyedit.ApplyDelete(ctx, c.Client, plan)
 		var ver []string
 		if res != nil {
@@ -177,6 +183,9 @@ func registerPolicyEdit(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match: the arguments, groups or sensors changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		res, runErr := policyedit.ApplyGroup(ctx, c.Client, plan)
 		var ver []string

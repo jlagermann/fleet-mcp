@@ -206,7 +206,7 @@ func registerSupportAccess(s *mcp.Server, d *Deps) {
 				out["blockers"] = blockers
 				out["next"] = "Tell the user why this route cannot be used; nothing was changed."
 			} else {
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the user the change (the remote interface on %s goes %s, via the %s route), the Device UID and the warnings. After they approve, call fm_sensor_support_access again with the same arguments plus confirm_token.", name, a.State, method)
 			}
 			r, err := jsonResult(out)
@@ -214,6 +214,9 @@ func registerSupportAccess(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the sensor's host key; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 
 		out := map[string]any{"executed": true, "fleet": c.Name, "sensor": name, "device_uid": uid, "state": a.State, "method": method}

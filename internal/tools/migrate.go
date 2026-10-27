@@ -246,7 +246,7 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 			out["tokens_read_from_database"] = fromDB
 		}
 		if plan.Ready() {
-			out["confirm_token"] = token
+			out["confirm_token"] = issueToken(token)
 			out["next"] = fmt.Sprintf("Show the plan, warnings and follow_up items to the user. After they approve importing into %s, call %s again with the same arguments plus package %q and confirm_token.", c.Name, tool, pkg)
 		} else if len(plan.Blockers) == 0 {
 			out["next"] = "Ask the user each question in plan.decisions, in your own words, and wait for the answer. Then preview again with the arguments its resolve entry gives for that answer (for exporters, \"yes\" means adding exclude [\"exporters\"]). Do not choose for the user."
@@ -258,6 +258,9 @@ func (d *Deps) importPackage(ctx context.Context, fleet, pkg string, a importOpt
 	}
 	if a.ConfirmToken != token {
 		return nil, nil, errors.New("confirm_token does not match these arguments or this package; preview again")
+	}
+	if err := redeemToken(token); err != nil {
+		return nil, nil, err
 	}
 	if !plan.Ready() {
 		return nil, nil, fmt.Errorf("the target changed since the preview and the import is now blocked: %v", plan.Blockers)

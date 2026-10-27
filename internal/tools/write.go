@@ -168,6 +168,9 @@ func registerWrite(s *mcp.Server, d *Deps) {
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match this request; the request changed since the preview (or the token is from another request). Preview again")
 		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
+		}
 
 		qv, _ := url.ParseQuery(q)
 		resp, err := c.Client.Do(ctx, method, a.Path, qv, body, "application/json")
@@ -235,13 +238,16 @@ func registerWrite(s *mcp.Server, d *Deps) {
 				"mutations":     fields,
 				"variables":     redact.Value(anyMap(a.Variables)),
 				"warnings":      warnings,
-				"confirm_token": token,
+				"confirm_token": issueToken(token),
 				"next":          "Show this preview to the user. After they approve, call fm_graphql_mutate again with the same query and variables plus confirm_token.",
 			})
 			return r, nil, err
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match this mutation; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		resp, err := c.Client.GraphQL(ctx, a.Query, a.Variables)
 		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_graphql_mutate", Path: "/graph/query",
@@ -336,7 +342,7 @@ func (d *Deps) previewREST(ctx context.Context, c *fleets.Conn, method, path str
 	if len(warnings) > 0 {
 		out["warnings"] = warnings
 	}
-	out["confirm_token"] = token
+	out["confirm_token"] = issueToken(token)
 	out["next"] = "Show this preview to the user. After they approve, call fm_api_write again with the identical method, path, query and body plus confirm_token."
 	r, err := jsonResult(out)
 	return r, nil, err

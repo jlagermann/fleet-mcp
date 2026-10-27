@@ -40,7 +40,7 @@ func registerContentWrite(s *mcp.Server, d *Deps) {
 			out := map[string]any{"preview": true, "fleet": c.Name, "ready": plan.Ready(), "plan": plan}
 			switch {
 			case plan.Ready():
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the user the steps, the diff, the validation, who gets it (used_by_sensor_policies) and the notes and warnings. After they approve pushing %s to %s, call fm_content_push again with the same arguments plus confirm_token.", plan.File.Path, c.Name)
 			case plan.Unchanged:
 				out["next"] = "Nothing to push: Fleet Manager already has this file. Tell the user."
@@ -52,6 +52,9 @@ func registerContentWrite(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match: the arguments, the file or Fleet Manager changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		res, runErr := content.Apply(ctx, c.Client, plan)
 		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_content_push", Token: token,

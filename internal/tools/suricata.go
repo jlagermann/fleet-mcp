@@ -126,7 +126,7 @@ func registerSuricataModify(s *mcp.Server, d *Deps) {
 			out := map[string]any{"preview": true, "fleet": c.Name, "ready": plan.Ready(), "plan": plan}
 			switch {
 			case plan.Ready():
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the user the rules now, what changes and the expected result. After they approve the change to Suricata policy %q on %s, call fm_suricata_modify again with the same arguments plus confirm_token.", plan.SuricataPolicy.Name, c.Name)
 			case len(plan.Blockers) == 0:
 				out["next"] = "Nothing to do: the requested modifiers are already in place. Tell the user."
@@ -138,6 +138,9 @@ func registerSuricataModify(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match: the arguments or the policy's modifiers changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		res, runErr := content.ApplySRM(ctx, c.Client, plan)
 		rec := audit.Record{Fleet: c.Name, User: c.Username, Tool: "fm_suricata_modify", Token: token,

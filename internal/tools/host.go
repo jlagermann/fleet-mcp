@@ -204,7 +204,7 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 			out := map[string]any{
 				"preview": true, "host": r.Name(), "url": in.URL(), "options": opts, "steps": plan,
 				"checklist": install.RenderChecklist(items), "checklist_ready": install.ChecklistReady(items),
-				"confirm_token": token,
+				"confirm_token": issueToken(token),
 				"next":          "Show the steps to the user. Blocked steps must be resolved first (for missing secrets see fm_secrets_status). After the user approves, call fm_host_install again with the same arguments plus confirm_token.",
 			}
 			res, err := jsonResult(out)
@@ -212,6 +212,9 @@ func registerHostWrite(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		steps, runErr := in.Execute(ctx)
 		rec := audit.Record{Fleet: a.Host, User: r.Name(), Tool: "fm_host_install", Body: map[string]any{"options": opts, "steps": steps}, Token: token}

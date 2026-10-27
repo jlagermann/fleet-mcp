@@ -144,7 +144,7 @@ func registerSensorAction(s *mcp.Server, d *Deps) {
 				out["blockers"] = blockers
 				out["next"] = "Tell the user why the action cannot run now; nothing was changed."
 			} else {
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				next := fmt.Sprintf("Show the user what %s does to %s (managed by %s). After they approve, call fm_sensor_action again with the same arguments plus confirm_token.", a.Action, name, c.Name)
 				if a.Action == "revert_update" {
 					next += " Run revert_update only if the user asked for a revert by name; otherwise suggest reboot."
@@ -156,6 +156,9 @@ func registerSensorAction(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the sensor's host key; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		output, runErr := run("run the action on the sensor", clientCmd+act.cmd)
 		out := map[string]any{"executed": true, "fleet": c.Name, "sensor": name, "uid": uid, "action": a.Action, "output": strings.TrimSpace(output)}

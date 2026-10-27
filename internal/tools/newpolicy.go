@@ -72,7 +72,7 @@ func registerNewPolicyWrite(s *mcp.Server, d *Deps) {
 			out := map[string]any{"preview": true, "fleet": c.Name, "ready": plan.Ready(), "plan": plan,
 				"sections": groupItems(plan.Built.Items), "packages_by_collection": groupPackages(plan.Built.Packages)}
 			if plan.Ready() {
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = fmt.Sprintf("Show the user the policy: every section, the packages and why, what is left at the default, the enrichment chain and the warnings, and ask plan.questions_for_user if there are any (answers go in input_readers or change the packages; preview again after). After they approve creating %q on %s, call fm_policy_create again with the same arguments plus confirm_token.", a.Name, c.Name)
 			} else {
 				out["next"] = "Resolve the blockers with the user (secrets go through fleet-mcp secret set-setting in their terminal) and preview again."
@@ -82,6 +82,9 @@ func registerNewPolicyWrite(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		if !plan.Ready() {
 			return nil, nil, fmt.Errorf("the policy can no longer be created: %v", plan.Blockers)

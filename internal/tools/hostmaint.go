@@ -143,7 +143,7 @@ func registerHostMaint(s *mcp.Server, d *Deps) {
 			case len(plan.Changes) == 0:
 				out["next"] = "Nothing to change."
 			default:
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = "Show the changes, steps and warnings to the user. After the user approves, call fm_host_configure again with the same arguments plus confirm_token."
 			}
 			res, err := jsonResult(out)
@@ -151,6 +151,9 @@ func registerHostMaint(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the host changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		done, runErr := m.ApplyConfigure(ctx, plan)
 		rec := audit.Record{Fleet: h, User: r.Name(), Tool: "fm_host_configure", Body: map[string]any{"changes": plan.Changes, "result": done}, Token: token}
@@ -235,7 +238,7 @@ func registerHostMaint(s *mcp.Server, d *Deps) {
 			case !plan.Ready():
 				out["next"] = "Nothing to install."
 			default:
-				out["confirm_token"] = token
+				out["confirm_token"] = issueToken(token)
 				out["next"] = "Show the versions, steps and warnings to the user. After the user approves, call fm_host_upgrade again with the same arguments plus confirm_token."
 			}
 			res, err := jsonResult(out)
@@ -243,6 +246,9 @@ func registerHostMaint(s *mcp.Server, d *Deps) {
 		}
 		if a.ConfirmToken != token {
 			return nil, nil, errors.New("confirm_token does not match these arguments or the host changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
 		}
 		done, runErr := u.Apply(ctx, plan)
 		rec := audit.Record{Fleet: h, User: r.Name(), Tool: "fm_host_upgrade", Body: map[string]any{"from": plan.Installed, "to": plan.Target, "result": done}, Token: token}

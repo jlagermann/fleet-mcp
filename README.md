@@ -10,14 +10,14 @@ AI agents use several kinds of help. fleet-mcp provides tools, server instructio
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **46 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **47 tools** |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects. Clients truncate long instructions (Claude Code at 4,096 bytes), so fleet-mcp's hold only the rules for every call: approval after a preview, no secrets in the chat, naming the Fleet Manager, and which guide to load for which task. | the agent, by reading it | built in, about 2.4 KB |
-| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **11 guides**, each also a prompt |
+| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **12 guides**, each also a prompt |
 | **Skill** | A packaged set of instructions (a `SKILL.md`) installed in the agent itself. | the agent, by reading it | none needed; you can write your own on top of these tools |
 
-The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`, `maintain-fleet-manager`. Each prompt takes an optional `request` argument, your task in your own words.
+The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`, `maintain-fleet-manager`, `upgrade-software-sensor`. Each prompt takes an optional `request` argument, your task in your own words.
 
-The 46 tools:
+The 47 tools:
 
 | Group | Count | Tools |
 |---|---|---|
@@ -27,7 +27,7 @@ The 46 tools:
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
 | Suricata ruleset test (read-only, over SSH on a host you name) | 1 | `fm_suricata_test` |
-| Changes (only with writes enabled; preview, then confirm) | 17 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
+| Changes (only with writes enabled; preview, then confirm) | 18 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -122,7 +122,8 @@ Permission rules for approving each change, in `~/.claude/settings.json`:
       "mcp__fleet-mcp__fm_sensor_fleet",
       "mcp__fleet-mcp__fm_sensor_ssh_key",
       "mcp__fleet-mcp__fm_sensor_action",
-      "mcp__fleet-mcp__fm_sensor_support_access"
+      "mcp__fleet-mcp__fm_sensor_support_access",
+      "mcp__fleet-mcp__fm_softsensor_upgrade"
     ]
   }
 }
@@ -411,6 +412,14 @@ Disable SIDs 2013028 and 2013504 in the Lab Suricata policy on the lab Fleet Man
 
 The `build-package-bundle` guide walks through building a bundle with `zkg bundle` (for example in the `zeek/zeek` Docker image matching the sensors' Zeek). It then pushes the bundle with `fm_content_push` and enables new packages in the sensor policy.
 
+## Upgrade a Software Sensor
+
+A Software Sensor cannot update itself: Fleet Manager's update settings and update trigger do not change it. `fm_softsensor_upgrade` upgrades one on its Ubuntu host over SSH (a user with passwordless sudo, as for Fleet Manager hosts; the host key must already be in your `known_hosts`). It follows the Corelight installation guide: `apt-get install corelightctl=<v> corelight-sensor=<v>` from the sensor-stable repository (the image packages follow), `corelightctl sensor prepare`, then `corelightctl sensor deploy -v`.
+
+The preview reads the installed, running and available versions and picks the newest version that is **not newer than the sensor's Fleet Manager** (a Fleet Manager must be the same version as its sensors or newer). It checks free space against the download plus corelightctl's own deploy requirement (about 22 GB in 29.x), the repository, a retired `corelight_corelightctl.list`, the OS, firewalld and the permissions of `corelightctl.yaml`, which holds the community string and pairing token. If the packages are already installed but the sensor still runs the old version (for example after a reboot was needed), it offers the deploy only.
+
+It also times synchronous writes on `/var/lib` and warns when they average 10 ms or more: etcd, the sensor's Kubernetes datastore, then falls behind and the deploy can miss corelightctl's fixed waits (exit 3, no rollback). If Kubernetes keeps running after such a failure, running the tool again once the host is idle deploys only, and usually passes. The upgrade runs on the host as the systemd unit `fleet-mcp-softsensor-upgrade`, so a dropped connection does not stop it; its output goes to `/var/log/fleet-mcp-softsensor-upgrade.log`. The confirmed call waits `wait_minutes` (default 20) and `status: true` follows it after that. Results name the failed stage and what corelightctl's deploy exit code means (6: the deploy rolled back to the previous one). Take a VM snapshot first and delete it afterwards.
+
 ## Detach, attach or move a sensor
 
 Fleet Manager cannot point a sensor at another Fleet Manager (its sensor proxy does not offer `fleet.server`), and deleting a sensor from Fleet Manager does not stop it from connecting again. So `fm_sensor_fleet` works on the sensor itself: it logs in over SSH as `diag-shell` and runs `corelight-client configuration update`.
@@ -557,12 +566,13 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_suricata_modify` | Tune single Suricata rules in Fleet Manager's rules manager: disable, enable or modify by SID or another match, remove modifiers; shows each rule before and after, waits for the rebuild and checks the rules (writes enabled; preview, then confirm) |
 | `fm_suricata_test` | Load a ruleset with a real Suricata (`suricata -T`) over SSH on a host you name: a local file, or the ruleset Fleet Manager generated for a policy, with the policy's address and port groups |
 | `fm_content_push` | Push an intel, input, YARA, Suricata rules or configuration file, or a package bundle, as it is: diff, Fleet Manager validation, optional policy linking, read-back (writes enabled; preview, then confirm) |
+| `fm_softsensor_upgrade` | Upgrade a Software Sensor on its Ubuntu host: corelightctl and corelight-sensor packages, prepare, deploy, with version, Fleet Manager and free-space checks; `status: true` follows a running upgrade (writes enabled; preview, then confirm) |
 | `fm_sensor_support_access` | Turn "Enable Corelight remote interface" (`remote.management`) on or off for Corelight Support, through Fleet Manager or directly on the sensor; shows the Device UID (writes enabled; preview, then confirm) |
 | `fm_sensor_ssh_key` | Install fleet-mcp's SSH key on a sensor (its individual setting `security.user.admin.ssh_public_key`) so moves need no password (writes enabled; preview, then confirm) |
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 

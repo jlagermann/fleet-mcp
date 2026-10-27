@@ -55,6 +55,9 @@ var all = []Guide{
 	{"move-sensor", "Detach, attach or move a sensor",
 		"Detach a sensor from Fleet Manager, attach it again, or move it to another Fleet Manager.",
 		"before fm_sensor_fleet"},
+	{"upgrade-software-sensor", "Upgrade a Software Sensor",
+		"Upgrade a Software Sensor on its Linux host: version limits, free space, snapshot, deploy and follow-up.",
+		"before fm_softsensor_upgrade, or when the user wants to upgrade a Software Sensor"},
 }
 
 // All returns every guide, in a fixed order.

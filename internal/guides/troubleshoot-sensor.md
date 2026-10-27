@@ -19,5 +19,5 @@ For an overview of every Fleet Manager and which sensors need attention, use `fm
    - `apply_updates`: applies pending software updates.
    - `revert_update`: only when the user asks for a revert by name.
 
-   Follow a deploy with `fm_sensor_shell` check `deploy`. Fleet Manager's update trigger only pushes policy; it never upgrades software.
+   Follow a deploy with `fm_sensor_shell` check `deploy`. Fleet Manager's update trigger only pushes policy; it never upgrades software. A Software Sensor (platform "Software Sensor") never updates itself: upgrade it with `fm_softsensor_upgrade` (fm_guide topic upgrade-software-sensor).
 7. **Corelight Support remote access:** `fm_sensor_support_access` turns "Enable Corelight remote interface" on or off and shows the Device UID Support needs. Turn it on only when Support asks, and off when they are done.

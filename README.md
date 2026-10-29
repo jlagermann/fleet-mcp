@@ -10,14 +10,14 @@ AI agents use several kinds of help. fleet-mcp provides tools, server instructio
 
 | | What it is | Who runs it | In fleet-mcp |
 |---|---|---|---|
-| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **49 tools** |
+| **Tool** | A function the agent calls with typed arguments; code does the work (API calls, SSH) and returns a result. Tools give the agent abilities it would not have otherwise. | fleet-mcp's code | **50 tools** |
 | **Server instructions** | Short guidance an MCP server sends when the agent connects. Clients truncate long instructions (Claude Code at 4,096 bytes), so fleet-mcp's hold only the rules for every call: approval after a preview, no secrets in the chat, naming the Fleet Manager, and which guide to load for which task. | the agent, by reading it | built in, about 2.4 KB |
-| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **13 guides**, each also a prompt |
+| **Guides** (skill-like) | Step-by-step playbooks for multi-step tasks, such as the policy-creation interview or a policy migration. They add no abilities; they guide how the agent uses the tools. The agent loads one with `fm_guide` when a task matches, and you can start one yourself as an **MCP prompt** (in Claude Code: `/fleet-mcp:<guide>`, e.g. `/fleet-mcp:troubleshoot-sensor`). | the agent, by reading it | **14 guides**, each also a prompt |
 | **Skill** | A packaged set of instructions (a `SKILL.md`) installed in the agent itself. | the agent, by reading it | none needed; you can write your own on top of these tools |
 
-The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `tune-suricata`, `build-package-bundle`, `move-sensor`, `maintain-fleet-manager`, `upgrade-software-sensor`, `manage-users`. Each prompt takes an optional `request` argument, your task in your own words.
+The guides: `install-fleet-manager`, `create-sensor-policy`, `change-sensor-policy`, `delete-sensor-policy`, `copy-sensor-policy`, `troubleshoot-sensor`, `push-content`, `manage-collections`, `tune-suricata`, `build-package-bundle`, `move-sensor`, `maintain-fleet-manager`, `upgrade-software-sensor`, `manage-users`. Each prompt takes an optional `request` argument, your task in your own words.
 
-The 49 tools:
+The 50 tools:
 
 | Group | Count | Tools |
 |---|---|---|
@@ -27,7 +27,7 @@ The 49 tools:
 | Policy packages (local files; Fleet Manager unchanged) | 2 | `fm_policy_export`, `fm_policy_packages` |
 | Sensor diagnostics (read-only, over SSH as diag-shell) | 1 | `fm_sensor_shell` |
 | Suricata ruleset test (read-only, over SSH on a host you name) | 1 | `fm_suricata_test` |
-| Changes (only with writes enabled; preview, then confirm) | 19 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`, `fm_user_manage` |
+| Changes (only with writes enabled; preview, then confirm) | 20 | `fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_policy_create`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`, `fm_collection_manage`, `fm_user_manage` |
 
 Each tool is described in [Tools](#tools); the command-line companion is in [Command line](#command-line).
 
@@ -117,6 +117,7 @@ Permission rules for approving each change, in `~/.claude/settings.json`:
       "mcp__fleet-mcp__fm_policy_import",
       "mcp__fleet-mcp__fm_policy_copy",
       "mcp__fleet-mcp__fm_group_manage",
+      "mcp__fleet-mcp__fm_collection_manage",
       "mcp__fleet-mcp__fm_content_push",
       "mcp__fleet-mcp__fm_suricata_modify",
       "mcp__fleet-mcp__fm_sensor_fleet",
@@ -299,6 +300,7 @@ Create a new north-south sensor policy called "Edge" on lab.
 
   The preview shows every change from → to, the licensed features it turns on, Fleet Manager's validation (fleet-mcp also checks IP and CIDR lists, which Fleet Manager accepts unchecked), the enrichment chain of the linked collections, and the sensor groups that get the change. After applying, fleet-mcp reads the policy back and checks that nothing else changed.
 - **`fm_group_manage`** creates, changes or deletes a sensor group and moves sensors in or out. The preview shows each sensor's group and policy before and after, and warns when the new policy turns on a feature a sensor has no active license for.
+- **`fm_collection_manage`** creates, changes or deletes a collection of any kind (intel, input, asset classification, CA bundle) or a YARA ruleset, adds and removes existing sources without uploading them again (so a source Corelight-update created can be put in a collection), and links it to or unlinks it from sensor policies. A policy has one collection of each kind, so the preview warns when a link replaces one; a collection still in use is deleted only when the same call unlinks it, and its sources are kept.
 - **`fm_policy_delete`** deletes a policy once no sensor group uses it. It lists everything the policy references and which other policies use each one, and on request also deletes the objects only this policy uses.
 
 ```text
@@ -577,6 +579,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 | `fm_policy_update` | Change a sensor policy: settings (null resets), secret settings from the store, Corelight and bundle packages, linked Suricata policy, YARA ruleset, collections and bundle; diff, validation (plus IP and CIDR lists), licensed features, enrichment chain, read-back (writes enabled; preview, then confirm) |
 | `fm_policy_delete` | Delete a sensor policy and, if you choose, the objects only it uses; blocked while a sensor group uses it (writes enabled; preview, then confirm) |
 | `fm_group_manage` | Create, change or delete a sensor group: name, policy and member sensors, with each sensor's group and policy before and after and license warnings (writes enabled; preview, then confirm) |
+| `fm_collection_manage` | Create, change or delete an intel, input, resource or CA bundle collection or a YARA ruleset: add or remove existing sources (also ones Corelight-update created), rename, link to or unlink from sensor policies; replaced links, duplicate file names, affected groups, input readers, read-back (writes enabled; preview, then confirm) |
 | `fm_policy_import` | Import a package as a new sensor policy (writes enabled; preview, then confirm) |
 | `fm_policy_copy` | Export from one Fleet Manager and import into another (writes enabled; preview, then confirm) |
 | `fm_sensor_fleet` | Detach a sensor from Fleet Manager, attach it again, or move it to another one, over SSH as diag-shell (writes enabled; preview, then confirm) |
@@ -592,7 +595,7 @@ Fleet Manager API tools (each takes an optional `fleet` argument):
 
 ### Changes need two calls
 
-A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`, `fm_user_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. A token works once, only within 30 minutes of its preview, and not after the server restarts, so every change follows a fresh preview; the hash also covers what the preview read where the tool reads state (a policy, a host, a sensor), so a change made in between makes the token stale. The agent is expected to show you the preview and get your approval in between.
+A tool that changes something (`fm_host_install`, `fm_host_configure`, `fm_host_upgrade`, `fm_api_write`, `fm_graphql_mutate`, `fm_policy_create`, `fm_policy_import`, `fm_policy_copy`, `fm_sensor_fleet`, `fm_sensor_ssh_key`, `fm_sensor_action`, `fm_sensor_support_access`, `fm_softsensor_upgrade`, `fm_content_push`, `fm_suricata_modify`, `fm_policy_update`, `fm_policy_delete`, `fm_group_manage`, `fm_collection_manage`, `fm_user_manage`) changes nothing when called without `confirm_token`. It returns a **preview**: the install plan, the import plan, or the request, the matching spec operation, impact warnings and, for PUT/PATCH, a field-by-field diff against the current object. The preview includes a `confirm_token`, a hash of that exact request; calling again with the identical request and the token executes it, and any other request is refused. A token works once, only within 30 minutes of its preview, and not after the server restarts, so every change follows a fresh preview; the hash also covers what the preview read where the tool reads state (a policy, a host, a sensor), so a change made in between makes the token stale. The agent is expected to show you the preview and get your approval in between.
 
 Requests to the server's own session and credential endpoints (login, logout, OAuth2 tokens, `/fleet/v1/current/*`) are refused.
 

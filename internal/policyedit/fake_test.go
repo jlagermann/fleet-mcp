@@ -30,6 +30,13 @@ type fakeFM struct {
 	rulesets    map[int64]string
 	collections map[int64]map[string]any
 	deleted     []string
+
+	// For fm_collection_manage: file sources (with "type"), YARA sources,
+	// each ruleset's source ids, and the mutations received.
+	fileSources []map[string]any
+	yaraSources []map[string]any
+	rulesetSrc  map[int64][]int64
+	mutations   []string
 }
 
 func newFake(t *testing.T) *fakeFM {
@@ -50,7 +57,8 @@ func newFake(t *testing.T) *fakeFM {
 			map[string]any{"name": "corelight:dga-detector", "package_name": "DGA Detector"},
 		},
 		policies: map[int64]map[string]any{}, groups: map[int64]map[string]any{}, bundles: map[int64]map[string]any{},
-		suricata: map[int64]map[string]any{}, rulesets: map[int64]string{}, collections: map[int64]map[string]any{}}
+		suricata: map[int64]map[string]any{}, rulesets: map[int64]string{}, collections: map[int64]map[string]any{},
+		rulesetSrc: map[int64][]int64{}}
 	for _, m := range []string{"GET", "POST", "PUT", "DELETE"} {
 		f.Handle(m+" /fleet/v1/", f.rest)
 	}
@@ -251,11 +259,18 @@ func (f *fakeFM) graphql(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	data := func(k string, v any) { reply(w, 200, map[string]any{"data": map[string]any{k: v}}) }
+	if f.collectionOp(req.Query, req.Variables, data) {
+		return
+	}
 	switch q := req.Query; {
 	case strings.Contains(q, "yaraRulesets"):
 		var list []any
 		for id, n := range f.rulesets {
-			list = append(list, map[string]any{"id": fmt.Sprint(id), "name": n})
+			var srcs []any
+			for _, s := range f.rulesetSrc[id] {
+				srcs = append(srcs, map[string]any{"id": s})
+			}
+			list = append(list, map[string]any{"id": fmt.Sprint(id), "name": n, "sources": srcs})
 		}
 		data("yaraRulesets", map[string]any{"rulesets": list})
 	case strings.Contains(q, "fileCollections"):

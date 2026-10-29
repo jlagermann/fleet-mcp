@@ -195,4 +195,45 @@ func registerPolicyEdit(s *mcp.Server, d *Deps) {
 		return finish("fm_group_manage", c.Name, c.Username, token, map[string]any{"action": plan.Action, "group": plan.Group, "changes": plan.Changes, "sensors": plan.Sensors, "result": res}, res, runErr, ver,
 			"read back: the group and every moved sensor are as planned")
 	})
+
+	type collectionArgs struct {
+		target
+		policyedit.CollectionRequest
+		ConfirmToken string `json:"confirm_token,omitempty" jsonschema:"the confirm_token from this change's preview; when it matches, the change is made"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "fm_collection_manage",
+		Description: guideFirst("manage-collections") + "Create, change or delete a content collection of any kind: intel, input, asset classification (resource) or CA bundle collection, or a YARA ruleset. In the same call, add or remove existing sources (by id, alias or file name; including ones another tool such as Corelight-update created, with no upload), rename it, and link it to or unlink it from sensor policies. " +
+			"The preview shows the sources and policies after the change, a policy's current collection that a link replaces, disabled sources, sources sharing a file name, sources another tool manages, the sensor groups affected and, for input collections, which loaded package on the connected sensors reads each file. A collection a policy still uses cannot be deleted unless the same call unlinks it; deleting a collection keeps its sources. After applying, it reads the collection and the policies back. " +
+			"Use fm_content_push to upload a file. Two steps: call without confirm_token for the preview; after the user approves, call again with the same arguments plus confirm_token.",
+		Annotations: &mcp.ToolAnnotations{Title: "Manage collection", DestructiveHint: &t, OpenWorldHint: &t},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, a collectionArgs) (*mcp.CallToolResult, any, error) {
+		c, err := d.writeConn(a.Fleet)
+		if err != nil {
+			return nil, nil, err
+		}
+		plan, err := policyedit.PrepareCollection(ctx, c.Client, a.CollectionRequest)
+		if err != nil {
+			return nil, nil, err
+		}
+		token := ConfirmToken(c.Client.Host(), "fm_collection_manage", c.Name, a.CollectionRequest, plan.State())
+		if a.ConfirmToken == "" {
+			return editFlow{fleet: c.Name, token: token, ready: plan.Ready(), preview: plan, blockers: plan.Blockers,
+				nextReady: fmt.Sprintf("Show the user the changes, the sources and policies after it, the warnings, the enrichment notes and the sensor groups affected. After they approve the %s of %s %q on %s, call fm_collection_manage again with the same arguments plus confirm_token.", plan.Action, plan.What, plan.Collection.Name, c.Name),
+				nextIdle:  "Nothing to change: the collection already is as asked. Tell the user."}.previewResult()
+		}
+		if a.ConfirmToken != token {
+			return nil, nil, errors.New("confirm_token does not match: the arguments, collections, sources or policies changed since the preview; preview again")
+		}
+		if err := redeemToken(token); err != nil {
+			return nil, nil, err
+		}
+		res, runErr := policyedit.ApplyCollection(ctx, c.Client, plan)
+		var ver []string
+		if res != nil {
+			ver = res.Verification
+		}
+		return finish("fm_collection_manage", c.Name, c.Username, token, map[string]any{"action": plan.Action, "kind": plan.Kind, "collection": plan.Collection, "changes": plan.Changes, "result": res}, res, runErr, ver,
+			"read back: the collection's sources and every changed policy link are as planned")
+	})
 }

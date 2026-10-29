@@ -15,7 +15,7 @@ One call changes a sensor policy:
 | Settings | `settings` | Key -> value. `null` resets a setting to its default. Lists can be a JSON array. |
 | Secret settings | `secret_settings` | Proxy password, exporter tokens and the like. The user stores each at a hidden prompt with `fleet-mcp secret set-setting <key>` (give the full path, as tool results do). Never take them in the chat. They are removed from the store once the policy holds them. |
 | Packages | `enable_packages`, `disable_packages` | Corelight packages by name (`corelight:<name>` or the display name), and custom bundle packages by key or short name. New bundle packages arrive disabled; this enables them. |
-| Linked content | `suricata_policy`, `yara_ruleset`, `intel_collection`, `input_collection`, `resource_collection`, `ca_bundle_collection`, `bundle` | An id or name, or `none` to unlink. |
+| Linked content | `suricata_policy`, `yara_ruleset`, `intel_collection`, `input_collection`, `resource_collection`, `ca_bundle_collection`, `bundle` | An id or name, or `none` to unlink. To change which sources a collection holds, or create one, use `fm_collection_manage` (manage-collections guide). |
 | Name and description | `name`, `description` | |
 
 Call without `confirm_token` and show the user:

@@ -1,6 +1,6 @@
 # Push content to Fleet Manager
 
-`fm_content_push` pushes one local file as it is. It does not fetch feeds, merge files or rewrite rules; the user prepares the file.
+`fm_content_push` pushes one local file as it is. It does not fetch feeds, merge files or rewrite rules; the user prepares the file. To put a source that already exists in Fleet Manager (for example one Corelight-update created) into a collection, without uploading it again, use `fm_collection_manage` instead (manage-collections guide).
 
 1. **What and where.** Settle with the user:
    - the kind: `intel`, `input`, `yara`, `suricata_rules`, a Suricata configuration file (`suricata_yaml`, `suricata_threshold`, `suricata_classification`, `suricata_reference`), a Suricata tuning file (`suricata_disable`, `suricata_enable`, `suricata_modify`: the `disable.conf`, `enable.conf`, `modify.conf` of a policy with Suricata automation and "Use configuration files") or `bundle`;

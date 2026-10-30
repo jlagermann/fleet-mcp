@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,6 +33,7 @@ type fakeFM struct {
 	sensors     []any
 	validation  map[string]any
 	failOn      string
+	rulesReads  int // rules-API calls that list every rule
 	deleted     []string
 }
 
@@ -129,12 +131,21 @@ func (f *fakeFM) rest(w http.ResponseWriter, r *http.Request) {
 		var q map[string][]string
 		_ = json.Unmarshal([]byte(r.URL.Query().Get("searchParams")), &q)
 		items := []any{}
-		for _, s := range q["sid"] {
+		sids := q["sid"]
+		if sids == nil { // every rule, in SID order, on one page
+			f.rulesReads++
+			base, _ := f.suricata[sid]["rules"].(map[string]any)
+			for s := range base {
+				sids = append(sids, s)
+			}
+			sort.Strings(sids)
+		}
+		for _, s := range sids {
 			if rule := f.effectiveRule(sid, s); rule != nil {
 				items = append(items, rule)
 			}
 		}
-		reply(w, 200, map[string]any{"items": items, "totalItemCount": len(items)})
+		reply(w, 200, map[string]any{"items": items, "totalItemCount": len(items), "totalPageCount": 1})
 	case m == "POST" && p == "/suricata/validate/modifiers":
 		var mods []map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&mods)

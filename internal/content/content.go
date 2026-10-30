@@ -2,8 +2,10 @@
 // and input files, YARA rules, Suricata rules and configuration files, and
 // Zeek package bundles. It diffs a file against what Fleet Manager has,
 // validates what Fleet Manager can validate, optionally links the content
-// to a sensor policy, and verifies the result. It never fetches, merges or
-// rewrites content; that stays with the user's own tooling.
+// to a sensor policy, and verifies the result. It never fetches or merges
+// content; that stays with the user's own tooling. The one rewrite is
+// converting Corelight-update syntax in Suricata tuning files, when the
+// user asks for it, into a separate file next to theirs.
 package content
 
 import (
@@ -80,7 +82,7 @@ const MaxFileBytes = 512 << 20
 // Request is one push.
 type Request struct {
 	Kind Kind   `json:"kind" jsonschema:"what to push: intel, input, yara, suricata_rules, suricata_yaml, suricata_threshold, suricata_classification, suricata_reference, suricata_disable, suricata_enable, suricata_modify (disable.conf, enable.conf, modify.conf of a Suricata policy with automation and configuration files) or bundle"`
-	File string `json:"file" jsonschema:"path of the local file to push, as it is (fleet-mcp does not merge or rewrite content)"`
+	File string `json:"file" jsonschema:"path of the local file to push, as it is (fleet-mcp does not merge or rewrite content; Suricata tuning files in Corelight-update syntax are converted only when cu_modifiers says so)"`
 	// Source names the object updated in place, or created when none has it.
 	Source string `json:"source,omitempty" jsonschema:"intel/input: the file source alias; yara: the YARA source name; suricata_rules on a policy with rules automation: the rule source name. An existing one is updated in place, otherwise one is created. Default: fleet-mcp (input: the file name)"`
 	// Name is the file name an input file gets on the sensors.
@@ -90,6 +92,10 @@ type Request struct {
 	Policy string `json:"policy,omitempty" jsonschema:"sensor policy id or exact name. bundle: required, the policy whose bundle is replaced. intel/input/yara: optional, adds the source to that policy's collection or YARA ruleset (created if the policy has none). suricata_*: the policy's Suricata policy is used if suricata_policy is not given"`
 	// SuricataPolicy is the Suricata policy for suricata_* kinds.
 	SuricataPolicy string `json:"suricata_policy,omitempty" jsonschema:"suricata_* only: Suricata policy id or exact name"`
+	// CUModifiers answers the cu_modifiers decision.
+	CUModifiers string `json:"cu_modifiers,omitempty" jsonschema:"suricata_disable/enable/modify: the user's answer to the cu_modifiers decision for lines in Corelight-update syntax: convert or comment_out. The result is written next to the file as <name>.fm.conf and pushed"`
+	// RulesFile gives the original rules when Fleet Manager cannot.
+	RulesFile string `json:"rules_file,omitempty" jsonschema:"suricata_modify with cu_modifiers: a local rules file with the original text of rules Fleet Manager cannot give (URL-source rules the current modify.conf changes); the preview lists the lines that need it in conversion.need_rules_file"`
 }
 
 // FileInfo describes the local file.
@@ -130,6 +136,10 @@ type Plan struct {
 	Notes      []string       `json:"notes,omitempty"`
 	Warnings   []string       `json:"warnings,omitempty"`
 	Blockers   []string       `json:"blockers,omitempty"`
+	// Decisions are questions for the user; the plan is not ready until
+	// they are answered.
+	Decisions  []Decision  `json:"decisions,omitempty"`
+	Conversion *Conversion `json:"conversion,omitempty"`
 
 	req     Request
 	content []byte
@@ -155,7 +165,7 @@ type linkPlan struct {
 }
 
 // Ready reports whether the plan can be applied.
-func (p *Plan) Ready() bool { return len(p.Blockers) == 0 && !p.Unchanged }
+func (p *Plan) Ready() bool { return len(p.Blockers) == 0 && len(p.Decisions) == 0 && !p.Unchanged }
 
 // State is what the plan was built from; a confirm token covers it, so a
 // change on Fleet Manager or in the file between preview and confirm is

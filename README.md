@@ -353,7 +353,7 @@ intel, then show me what importing it into lab would do, without the exporters.
 
 ## Push content to Fleet Manager
 
-`fm_content_push` pushes one local file to Fleet Manager **as it is**. It does not fetch feeds, merge files or rewrite rules: prepare the file with your own tooling. Rule tuning belongs in the Suricata policy's modifiers.
+`fm_content_push` pushes one local file to Fleet Manager **as it is**. It does not fetch feeds, merge files or rewrite rules: prepare the file with your own tooling. The one exception, on request, is converting Corelight-update syntax in Suricata tuning files (below). Rule tuning belongs in the Suricata policy's modifiers.
 
 | Kind | What it changes |
 |---|---|
@@ -362,7 +362,7 @@ intel, then show me what importing it into lab would do, without the exporters.
 | `yara` | A YARA source (by name, default `fleet-mcp`), checked by Fleet Manager's YARA validation first. |
 | `suricata_rules` | With rules automation: a file rule source of the Suricata policy (by name, default `fleet-mcp`; the other sources are kept). Without: the policy's whole rule set. Fleet Manager parses the file first (it does not run Suricata). |
 | `suricata_yaml`, `suricata_threshold`, `suricata_classification`, `suricata_reference` | That configuration file of the Suricata policy. A `suricata.yaml` snippet must start with `%YAML 1.1` and `---`. |
-| `suricata_disable`, `suricata_enable`, `suricata_modify` | The `disable.conf`, `enable.conf` or `modify.conf` of a Suricata policy with Suricata automation, set to "Use configuration files" (the push switches it if needed). fleet-mcp checks the syntax first: Fleet Manager rejects the whole file at upload for one bad line, and Corelight-update-only syntax (`MetadataAppend`, `Msg`/`GID`/`Rev` changes, regex rewrites) is not accepted. After the push, fleet-mcp waits for Fleet Manager to rebuild the ruleset and reports errors. |
+| `suricata_disable`, `suricata_enable`, `suricata_modify` | The `disable.conf`, `enable.conf` or `modify.conf` of a Suricata policy with Suricata automation, set to "Use configuration files" (the push switches it if needed). fleet-mcp checks the syntax first, because Fleet Manager rejects the whole file at upload for one bad line. Lines in Corelight-update syntax that Fleet Manager rejects or ignores (`MetadataAppend`, `Msg`/`GID`/`Rev`/`Classtype` changes, regex rewrites, `re:` without slashes, `Metadata:` matches, SID lists, `gid:sid`) are listed with what each would become, and you choose: convert them, comment them out, or stop (`cu_modifiers`). The result is written to `<name>.fm.conf` next to your file and pushed. Option changes become a per-rule `RuleOptions` line (frozen until converted again). A rewrite of one header field becomes `re:` lines that still catch new rules. The rule text comes from the policy; give `rules_file` for URL-source rules the current modify.conf already changes. After the push, fleet-mcp waits for Fleet Manager to rebuild the ruleset and reports errors. |
 | `bundle` | A Zeek package bundle (from `zkg bundle`) as the sensor policy's bundle. The policy keeps its enabled packages. |
 
 The preview shows:

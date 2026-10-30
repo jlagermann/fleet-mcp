@@ -23,7 +23,7 @@ func registerContentWrite(s *mcp.Server, d *Deps) {
 		Description: guideFirst("push-content") + "Push a local content file to Fleet Manager as it is: an intel or input file (file source, updated in place by alias), YARA rules (YARA source), " +
 			"a Suricata rules file (a rule source of a Suricata policy with rules automation, or its rule set), a Suricata configuration file (suricata.yaml snippet, threshold, classification or reference config), a Suricata tuning file (disable.conf, enable.conf, modify.conf of a policy with automation and configuration files) " +
 			"or a Zeek package bundle (replaces a sensor policy's bundle, keeping its enabled packages). The preview diffs the file against what Fleet Manager has (SIDs, indicators, records, YARA rules, bundle packages), " +
-			"has Fleet Manager parse Suricata rules and validate YARA files, checks tuning files for syntax Fleet Manager rejects, notes objects another tool manages, and for intel, input and YARA can add the source to a sensor policy's collection or ruleset. " +
+			"has Fleet Manager parse Suricata rules and validate YARA files, checks tuning files for syntax Fleet Manager rejects and offers to convert Corelight-update syntax (decision cu_modifiers), notes objects another tool manages, and for intel, input and YARA can add the source to a sensor policy's collection or ruleset. " +
 			"Two steps: call without confirm_token for the preview; after the user approves, call again with the same arguments plus confirm_token.",
 		Annotations: &mcp.ToolAnnotations{Title: "Push content", DestructiveHint: &f, OpenWorldHint: &t},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, a pushArgs) (*mcp.CallToolResult, any, error) {
@@ -44,6 +44,12 @@ func registerContentWrite(s *mcp.Server, d *Deps) {
 				out["next"] = fmt.Sprintf("Show the user the steps, the diff, the validation, who gets it (used_by_sensor_policies) and the notes and warnings. After they approve pushing %s to %s, call fm_content_push again with the same arguments plus confirm_token.", plan.File.Path, c.Name)
 			case plan.Unchanged:
 				out["next"] = "Nothing to push: Fleet Manager already has this file. Tell the user."
+			case len(plan.Decisions) > 0:
+				next := "Show the user conversion.lines (each Corelight-update line and why Fleet Manager cannot take it) and the warnings, ask each question in decisions, and preview again with their answer in cu_modifiers (convert or comment_out); stop means do not push. Only convert reads the policy's rules, so its preview shows what every line becomes; show that before asking for approval."
+				if len(plan.Blockers) > 0 {
+					next += " The blockers must be fixed too."
+				}
+				out["next"] = next
 			default:
 				out["next"] = "Explain the blockers to the user; fix the file or the arguments and preview again."
 			}

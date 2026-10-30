@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,42 +26,30 @@ const modifierStore = "suricata-configuration-files"
 var rulesetSettle = 3 * time.Second
 
 // Keys Fleet Manager's rules processor accepts (from its file templates,
-// and checked against Fleet Manager 29.2).
+// checked by uploads to Fleet Manager 29.2).
 var (
 	fmMatchKeys = map[string]bool{"sid": true, "re": true, "action": true, "classtype": true, "destaddress": true, "destport": true,
 		"filename": true, "gid": true, "group": true, "msg": true, "metadata": true, "priority": true, "protocol": true,
 		"reference": true, "rev": true, "srcaddress": true, "srcport": true, "target": true}
 	fmChangeKeys = map[string]bool{"action": true, "destaddress": true, "destport": true, "protocol": true,
-		"srcaddress": true, "srcport": true, "ruleoptions": true}
-	bareSID = regexp.MustCompile(`^(\d+:)?\d+$`)
+		"srcaddress": true, "srcport": true, "ruleoptions": true, "priority": true}
+	bareSID = regexp.MustCompile(`^\d+$`)
 )
 
 // lintModifier finds lines Fleet Manager rejects (it rejects the whole file
-// at upload) or handles differently from Corelight-update.
+// at upload). Lines in Corelight-update syntax are left to planConversion.
 func lintModifier(kind Kind, b []byte) (errs, warns []string) {
 	for i, raw := range strings.Split(string(b), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
+		ml := parseModLine(kind, i+1, raw)
+		if ml == nil || ml.cu() {
 			continue
 		}
-		if j := strings.Index(line, " #"); j > 0 && !strings.Contains(line[:j], "\"") {
-			line = strings.TrimSpace(line[:j]) // trailing comment
-		}
-		n := i + 1
-		match, change := splitModifier(line)
-		if strings.HasPrefix(strings.ToLower(match), "re:") {
-			if !strings.HasPrefix(match[3:], "/") {
-				errs = append(errs, fmt.Sprintf("line %d: Fleet Manager needs a regex enclosed in slashes (re:/.../): %s", n, clip(line)))
-				continue
-			}
-		} else if !bareSID.MatchString(match) {
+		n, line, match, change := ml.n, ml.text, ml.match, ml.change
+		if !strings.HasPrefix(strings.ToLower(match), "re:") && !bareSID.MatchString(match) {
 			key, _, ok := strings.Cut(match, ":")
 			if !ok || !fmMatchKeys[strings.ToLower(key)] {
 				errs = append(errs, fmt.Sprintf("line %d: unknown match key %q: %s", n, key, clip(line)))
 				continue
-			}
-			if strings.EqualFold(key, "metadata") {
-				warns = append(warns, fmt.Sprintf("line %d: a Metadata: match did not match rules in Fleet Manager 29.2 testing; re:/<text>/ does (for example re:/deployment SSLDecrypt/): %s", n, clip(line)))
 			}
 		}
 		if kind != SuricataModify {
@@ -73,25 +62,25 @@ func lintModifier(kind Kind, b []byte) (errs, warns []string) {
 			errs = append(errs, fmt.Sprintf("line %d: no change (<matchKey>:<value> <changeKey>:<value>): %s", n, clip(line)))
 			continue
 		}
-		if strings.HasPrefix(change, "\"") {
-			errs = append(errs, fmt.Sprintf("line %d: Corelight-update's regex rewrite (re:<regex> \"<from>\" \"<to>\") is not supported by Fleet Manager: %s", n, clip(line)))
-			continue
-		}
-		key, _, _ := strings.Cut(change, ":")
-		if !fmChangeKeys[strings.ToLower(strings.TrimSpace(key))] {
-			errs = append(errs, fmt.Sprintf("line %d: change key %q is not supported by Fleet Manager (it accepts Action, SrcAddress, SrcPort, DestAddress, DestPort, Protocol and RuleOptions): %s", n, key, clip(line)))
+		if !fmChangeKeys[ml.key] {
+			errs = append(errs, fmt.Sprintf("line %d: change key %q is not supported by Fleet Manager (it accepts Action, Protocol, SrcAddress, SrcPort, DestAddress, DestPort, Priority and RuleOptions): %s", n, ml.key, clip(line)))
 		}
 	}
 	return errs, warns
 }
 
 // splitModifier splits a line into its match and the rest (the change).
-// A regex match runs to its closing slash; a quoted value to its quote.
+// A regex match runs to its closing (unescaped) slash; a quoted value to
+// its quote.
 func splitModifier(line string) (match, change string) {
 	if strings.HasPrefix(strings.ToLower(line), "re:/") {
-		if j := strings.Index(line[4:], "/"); j >= 0 {
-			end := 4 + j + 1
-			return line[:end], strings.TrimSpace(line[end:])
+		for i := 4; i < len(line); i++ {
+			switch line[i] {
+			case '\\':
+				i++
+			case '/':
+				return line[:i+1], strings.TrimSpace(line[i+1:])
+			}
 		}
 	}
 	if k := strings.Index(line, ":\""); k > 0 && !strings.ContainsAny(line[:k], " \t") {
@@ -121,6 +110,7 @@ func (p *Plan) planSuricataModifier(ctx context.Context, api API) error {
 		p.state = append(p.state, "mode=srm")
 	}
 	var old []byte
+	enabled := false
 	for _, m := range listOf(sp["modifierFiles"]) {
 		mf := obj(m)
 		if str(mf["name"]) != name {
@@ -133,13 +123,27 @@ func (p *Plan) planSuricataModifier(ctx context.Context, api API) error {
 				return err
 			}
 			p.Target.CurrentSHA256, p.Target.CurrentSize = sha256Hex(old), int64(len(old))
-			p.Unchanged = normModifier(old) == normModifier(p.content) && mf["enabled"] == true && sp["useModifierFiles"] == true
+			enabled = mf["enabled"] == true && sp["useModifierFiles"] == true
 		}
 	}
+	// Only an applied modify.conf changes the rules the conversion reads.
+	var current []byte
+	if p.Kind == SuricataModify && enabled {
+		current = old
+	}
+	if err := p.planConversion(ctx, api, current); err != nil {
+		return err
+	}
+	p.Unchanged = old != nil && enabled && normModifier(old) == normModifier(p.content) && len(p.Decisions) == 0
 	// Fleet Manager stores each entry with a "- ", "+ " or "~ " prefix (disable,
 	// enable, modify); compare without it.
 	p.Diff = diffLines(stripFMPrefix(old), stripFMPrefix(p.content), old != nil)
 	errs, warns := lintModifier(p.Kind, p.content)
+	if p.Conversion != nil && p.Conversion.Output != "" {
+		for i, e := range errs {
+			errs[i] = filepath.Base(p.Conversion.Output) + " " + e
+		}
+	}
 	p.Blockers = append(p.Blockers, errs...)
 	if len(errs) > 0 {
 		p.note("Fleet Manager rejects the whole file at upload if any line is invalid; comment out or rewrite the lines listed in blockers")

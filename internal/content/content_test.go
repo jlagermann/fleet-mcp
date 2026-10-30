@@ -300,7 +300,8 @@ func TestPackageKey(t *testing.T) {
 }
 
 func TestLintModifier(t *testing.T) {
-	// Lines Fleet Manager 29.2 rejected at upload, from a real Corelight-update modify.conf.
+	// Corelight-update syntax (lines 5-10) is left to the conversion; only
+	// lines neither tool understands are problems.
 	modify := strings.Join([]string{
 		"# comment",
 		`2620092 SrcAddress:![10.1.3.32, 10.1.3.33]`,
@@ -312,25 +313,25 @@ func TestLintModifier(t *testing.T) {
 		`re:(mitre_technique_id\sT1190|tag\sExploit\b) "^(alert \S+) any " "$1 !$$SCANNERS "`,
 		`re:classtype:(web-application-attack); "^(alert \S+) any " "$1 x "`,
 		`Metadata:"deployment SSLDecrypt" Action:drop`,
+		`2000001 Priority:1`,
+		`2000002 Bogus:1`,
+		`Nope:1 Action:drop`,
+		`2000003`,
 	}, "\n")
-	errs, warns := content.LintModifier(content.SuricataModify, []byte(modify))
-	for _, want := range []string{"line 5: change key \"Msg\"", "line 6: change key \"GID\"", "line 7: change key \"MetadataAppend\"",
-		"line 8: Fleet Manager needs a regex enclosed in slashes", "line 9: Fleet Manager needs a regex enclosed in slashes"} {
+	errs, _ := content.LintModifier(content.SuricataModify, []byte(modify))
+	for _, want := range []string{`line 12: change key "bogus"`, `line 13: unknown match key "Nope"`, "line 14: no change"} {
 		if !strings.Contains(strings.Join(errs, "\n"), want) {
 			t.Errorf("missing %q in %v", want, errs)
 		}
 	}
-	if len(errs) != 5 {
-		t.Errorf("%d problems, want 5: %v", len(errs), errs)
-	}
-	if len(warns) != 1 || !strings.Contains(warns[0], "line 10") {
-		t.Errorf("warnings: %v", warns)
+	if len(errs) != 3 {
+		t.Errorf("%d problems, want 3: %v", len(errs), errs)
 	}
 
 	disable := "2033683 # a comment\n1:2035465\nsid:2053281\nre:/x y/\nMetadata:\"deployment SSLDecrypt\"\nBogus:1\n2069171 Action:drop\n"
-	errs, warns = content.LintModifier(content.SuricataDisable, []byte(disable))
-	if len(errs) != 2 || !strings.Contains(errs[0], "line 6") || !strings.Contains(errs[1], "line 7") || len(warns) != 1 {
-		t.Errorf("disable: errs %v warns %v", errs, warns)
+	errs, _ = content.LintModifier(content.SuricataDisable, []byte(disable))
+	if len(errs) != 2 || !strings.Contains(errs[0], "line 6") || !strings.Contains(errs[1], "line 7") {
+		t.Errorf("disable: errs %v", errs)
 	}
 }
 
@@ -472,5 +473,110 @@ func TestSRMClash(t *testing.T) {
 	}})
 	if err != nil || p.Ready() || !strings.Contains(preview(t, p), "both enable and disable requested for sid:200") {
 		t.Fatalf("%v %s", err, preview(t, p))
+	}
+}
+
+func TestModifyConversionPush(t *testing.T) {
+	fm := newFake(t)
+	src := "alert http $EXTERNAL_NET any -> $HOME_NET any (msg:\"A\"; content:\"a\"; metadata:created_at 2026; sid:100; rev:1;)\n" +
+		"alert http $EXTERNAL_NET any -> $HOME_NET any (msg:\"B\"; content:\"b\"; sid:200; rev:1;)\n"
+	srcID := fm.addFile([]byte(src))
+	// The modify.conf Fleet Manager applies now changed 100 (a local file
+	// source) and 300 (from a URL source), so the rules API shows them changed.
+	applied := "~ 100 RuleOptions:(msg:\"A\"; content:\"a\"; metadata:created_at 2026, followup watch; sid:100; rev:1;)\n~ 300 SrcAddress:10.0.0.1\n"
+	curID := fm.addFile([]byte(applied))
+	rule := func(sid, file, srcAddr, opts string) map[string]any {
+		return map[string]any{"sid": sid, "action": "alert", "protocol": "http", "srcAddress": srcAddr, "srcPort": "any", "direction": "->",
+			"destAddress": "$HOME_NET", "destPort": "any", "rawOptions": opts, "filename": file, "disabled": false}
+	}
+	fm.suricata[9] = map[string]any{"id": 9, "name": "Edge", "rulesAutomation": true, "useModifierFiles": true, "config": map[string]any{},
+		"sources": []any{
+			map[string]any{"id": 1, "name": "local", "entityType": "file", "enabled": true, "fileId": srcID, "filename": "local.rules"},
+			map[string]any{"id": 2, "name": "ET", "entityType": "url", "enabled": true, "url": "https://example.com/emerging.rules.tar.gz"},
+		},
+		"modifierFiles": []any{
+			map[string]any{"id": 1, "name": "disable.conf", "fileId": 0, "enabled": false},
+			map[string]any{"id": 2, "name": "enable.conf", "fileId": 0, "enabled": false},
+			map[string]any{"id": 3, "name": "modify.conf", "fileId": curID, "enabled": true},
+		},
+		"rules": map[string]any{
+			"100": rule("100", "local.rules", "$EXTERNAL_NET", `(msg:"A"; content:"a"; metadata:created_at 2026, followup watch; sid:100; rev:1;)`),
+			"200": rule("200", "local.rules", "$EXTERNAL_NET", `(msg:"B"; content:"b"; sid:200; rev:1;)`),
+			"300": rule("300", "emerging.rules", "10.0.0.1", `(msg:"C"; sid:300; rev:1;)`),
+		}}
+	ctx := context.Background()
+	file := writeFile(t, "modify.conf", []byte("100 MetadataAppend:followup watch\n300 Msg:\"C2\"\n200 SrcAddress:1.2.3.4\n"))
+	outPath := filepath.Join(filepath.Dir(file), "modify.fm.conf")
+	req := content.Request{Kind: content.SuricataModify, File: file, SuricataPolicy: "Edge"}
+
+	// Without an answer: a decision, a preview of each line, nothing written.
+	p, err := content.Prepare(ctx, fm.client, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Ready() || len(p.Decisions) != 1 || p.Decisions[0].ID != "cu_modifiers" || p.Conversion == nil || p.Conversion.Count != 2 {
+		t.Fatalf("preview: %s", preview(t, p))
+	}
+	c := p.Conversion
+	for _, l := range c.Lines {
+		if l.Action != "converted if you choose convert" || l.Result != nil {
+			t.Errorf("before the answer, lines that need rule text are only listed: %s", preview(t, l))
+		}
+	}
+	if fm.rulesReads != 0 {
+		t.Errorf("the preview without an answer read the policy's rules %d time(s)", fm.rulesReads)
+	}
+	if _, err := os.Stat(outPath); err == nil {
+		t.Errorf("preview without an answer wrote %s", outPath)
+	}
+
+	// convert: the rules are read, the file is written next to the user's
+	// and pushed.
+	req.CUModifiers = content.CUConvert
+	if p, err = content.Prepare(ctx, fm.client, req); err != nil || !p.Ready() {
+		t.Fatalf("convert: %v %s", err, preview(t, p))
+	}
+	c = p.Conversion
+	if fm.rulesReads != 1 || len(c.Lines) != 2 || len(c.Lines[0].Result) != 1 ||
+		c.Lines[0].Result[0] != `100 RuleOptions:(msg:"A"; content:"a"; metadata:created_at 2026, followup watch; sid:100; rev:1;)` {
+		t.Errorf("line 1 (appended once, from the file source; %d rule reads): %s", fm.rulesReads, preview(t, c.Lines))
+	}
+	if c.Lines[1].Action != "commented out" || !strings.Contains(c.Lines[1].Reason, "give rules_file") || len(c.NeedRulesFile) != 1 || c.NeedRulesFile[0] != 2 {
+		t.Errorf("line 2 (URL source): %s", preview(t, c))
+	}
+
+	// comment_out never reads the rules.
+	reads := fm.rulesReads
+	req.CUModifiers = content.CUCommentOut
+	if p, err = content.Prepare(ctx, fm.client, req); err != nil || !p.Ready() || fm.rulesReads != reads {
+		t.Fatalf("comment_out: %v reads %d→%d %s", err, reads, fm.rulesReads, preview(t, p))
+	}
+	req.CUModifiers = content.CUConvert
+	if p, err = content.Prepare(ctx, fm.client, req); err != nil || !p.Ready() {
+		t.Fatalf("convert again: %v %s", err, preview(t, p))
+	}
+	written, err := os.ReadFile(outPath)
+	if err != nil || p.Conversion.Output != outPath || !strings.Contains(string(written), "\n200 SrcAddress:1.2.3.4\n") ||
+		!strings.Contains(string(written), "# fleet-mcp: commented out (the current modify.conf") {
+		t.Fatalf("written %s: %v\n%s", outPath, err, written)
+	}
+	res, err := content.Apply(ctx, fm.client, p)
+	if err != nil || len(res.Verification) > 0 {
+		t.Fatalf("apply: %v %+v", err, res)
+	}
+	if string(fm.files[res.FileID]) != string(written) {
+		t.Errorf("uploaded file differs from %s", outPath)
+	}
+
+	// rules_file supplies the URL source's original text.
+	req.RulesFile = writeFile(t, "emerging.rules", []byte("alert http any any -> $HOME_NET any (msg:\"C\"; sid:300; rev:1;)\n"))
+	if p, err = content.Prepare(ctx, fm.client, req); err != nil || !p.Ready() {
+		t.Fatalf("rules_file: %v %s", err, preview(t, p))
+	}
+	if got := strings.Join(p.Conversion.Lines[1].Result, "\n"); got != `300 RuleOptions:(msg:"C2"; sid:300; rev:1;)` {
+		t.Errorf("rules_file line 2: %q", got)
+	}
+	if p.Conversion.Lines[0].Action != "converted" || len(p.Conversion.NeedRulesFile) != 0 {
+		t.Errorf("rules_file only fills in missing rules: %s", preview(t, p.Conversion))
 	}
 }

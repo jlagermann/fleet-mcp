@@ -26,34 +26,47 @@ Tested with Fleet Manager 29.2.2 and Corelight-update's main branch (2.1.8 relea
 
 ## Configuration file syntax
 
-Fleet Manager checks every line when the file is uploaded and rejects the whole file at the first problem (for example `parsing modifier on line 96: validating: invalid change key "Msg"`). fleet-mcp's `fm_content_push` checks for these before uploading.
+Fleet Manager checks every line when the file is uploaded and rejects the whole file at the first problem (for example `parsing modifier on line 96: validating: invalid change key "Msg"`). Some other lines are accepted but match nothing.
+
+`fm_content_push` finds both kinds before uploading. It lists each line with what it would become and asks you to **convert** them, **comment them out** or stop (`cu_modifiers`). The result is written to `<name>.fm.conf` next to your file, with each converted line keeping the original as a comment. Your file is not changed. The "Conversion" column below shows what it does.
+
+Fleet Manager applies the lines **in file order**, as Corelight-update does. A later `re:` sees the result of an earlier change, so a converted `MetadataAppend` still feeds a regex that matches on the added metadata.
 
 ### modify.conf
 
 Fleet Manager accepts `<matchKey>:<value> <changeKey>:<value>`.
-- **Change keys:** `Action`, `SrcAddress`, `SrcPort`, `DestAddress`, `DestPort`, `Protocol` and `RuleOptions`.
+- **Change keys:** `Action`, `Protocol`, `SrcAddress`, `SrcPort`, `DestAddress`, `DestPort`, `Priority` (adds or replaces `priority:N;`) and `RuleOptions`.
 - **Match keys:** `SID` (or a bare number), `re:/regex/`, `Action`, `ClassType`, `DestAddress`, `DestPort`, `Filename`, `GID`, `Group`, `Msg`, `Metadata`, `Priority`, `Protocol`, `Reference`, `Rev`, `SrcAddress`, `SrcPort` and `Target`.
+- `re:/…/` is tried against the whole rule, header included (`^alert \S+ \$EXTERNAL_NET …`), with Go regex syntax. Escape a `/` inside it as `\/`.
+- Several lines for one SID all apply.
 
-| Corelight-update | Fleet Manager | What to do |
+| Corelight-update | Fleet Manager | Conversion |
 |---|---|---|
-| `MetadataAppend:` | Rejected | Use `RuleOptions:` with the whole rule option text, including the added metadata. |
-| `Msg:`, `GID:`, `Rev:` as change keys | Rejected | Use `RuleOptions:` with the whole rule option text. |
-| `re:<regex> "<from>" "<to>"` (regex rewrite of the raw rule) | Rejected | No equivalent. Replace it with one entry per rule, or with a match key plus `SrcAddress`/`DestAddress`. A rewrite that touches thousands of rules has no practical replacement. |
-| `re:<regex>` without slashes | Rejected | Write `re:/<regex>/`. |
-| `SrcAddress`, `DestAddress`, `SrcPort`, `DestPort`, `RuleOptions` | Accepted | Same result as Corelight-update. |
+| `MetadataAppend:`, `Metadata:`, `Msg:`, `GID:`, `Rev:`, `SID:`, `Classtype:`, `Target:`, `Threshold:`, `OtherAppend:`, `FlowbitsNoAlert:`, `NoAlert:` as change keys | Rejected | One `<sid> RuleOptions:(…)` per matched rule, with that one option edited the way Corelight-update does it. The rule's option text is then **frozen**: when the source updates the rule, the old text stays until you convert again. |
+| `Other:` (replaces every detection option) | Rejected | Not converted: commented out or rewritten by hand. |
+| `re:<regex> "<from>" "<to>"`, `<sid> "<from>" "<to>"` (regex rewrite of the raw rule) | Rejected | When it changes one header field, one `re:/^… <original value> .*<regex>/ <Field>:<new value>` per original value. These keep matching new rules, and fleet-mcp checks they select exactly the rules the rewrite changes. Otherwise, one line per changed rule (header fields, plus a frozen `RuleOptions` when the options change). |
+| `re:<regex>` or `re:"<regex>"` without slashes | Rejected | `re:/<regex>/`. |
+| `a,b,c` (SID list) | Rejected | One line per SID. |
+| `1:<sid>` (gid:sid) | Accepted, but matches no rule | `<sid>`. |
+| `Metadata:"<text>"` as a match | Accepted, but matches no rule | `re:/metadata:[^;]*<text>/`. |
+| `*` | Rejected | `re:/./`. |
+| `SrcAddress`, `DestAddress`, `SrcPort`, `DestPort`, `Protocol`, `Action`, `Priority`, `RuleOptions` | Accepted | Kept as they are. |
+
+The conversion needs each rule's text **as it is before the file applies**. fleet-mcp reads it from the Suricata policy, but Fleet Manager only shows rules after its current configuration files. Rules the current modify.conf changes are therefore read again from their file source. Rules from a URL source (ET Open, ET Pro) have no downloadable file: lines that touch them are commented out unless you give `rules_file`, a local copy of those rules.
 
 ### disable.conf and enable.conf
 
 Fleet Manager accepts:
 - a bare SID (`2000328`) or `SID:2000328`;
-- `<gid>:<sid>`;
 - `re:/regex/`;
 - `Field:value` with the match keys above.
 
-| Corelight-update | Fleet Manager | What to do |
+| Corelight-update | Fleet Manager | Conversion |
 |---|---|---|
-| `Metadata:"deployment SSLDecrypt"` | Accepted, but matched no rules (with or without quotes) | Write `re:/deployment SSLDecrypt/`. In the test, the quoted form left 4,136 rules enabled that Corelight-update disables. |
-| Bare SIDs, `SID:`, `re:/.../` | Accepted | Same result. |
+| `Metadata:"deployment SSLDecrypt"` | Accepted, but matched no rules (with or without quotes). In the test, the quoted form left 4,136 rules enabled that Corelight-update disables. | `re:/metadata:[^;]*deployment SSLDecrypt/` |
+| `1:<sid>` (gid:sid) | Accepted, but matches no rule | `<sid>` |
+| `a,b,c`, `re:<regex>` without slashes | Rejected | One line per SID; `re:/<regex>/` |
+| Bare SIDs, `SID:`, `re:/.../` | Accepted | Kept as they are. |
 
 Fleet Manager stores each entry with a `-` (disable), `+` (enable) or `~` (modify) prefix. The file you download back shows them.
 

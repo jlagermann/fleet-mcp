@@ -88,7 +88,7 @@ func TestValidateIdentityCert(t *testing.T) {
 }
 
 func TestValidateRepoToken(t *testing.T) {
-	if err := ValidateRepoToken("a6d18e958feea5bc9b07f1d8b377492c2ca4e9656b2140cc"); err != nil {
+	if err := ValidateRepoToken("FakeRepoTokenForTests0123456789"); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{"short", "has space in it 1234", "abc$(rm -rf)1234567890", strings.Repeat("a", 200)} {
@@ -117,7 +117,7 @@ func TestValidateCommunityString(t *testing.T) {
 }
 
 func TestCleanAndDescribe(t *testing.T) {
-	tok := "a6d18e958feea5bc9b07f1d8b377492c2ca4e9656b2140cc"
+	tok := "FakeRepoTokenForTests0123456789"
 	for _, in := range []string{tok, " " + tok + "\t", "\x1b[200~" + tok + "\x1b[201~", `"` + tok + `"`, "'" + tok + "'"} {
 		if got := Clean(in); got != tok {
 			t.Errorf("Clean(%q) = %q", in, got)

@@ -649,3 +649,7 @@ make test   # unit tests against a fake Fleet Manager and fake hosts
 make lint   # go vet + staticcheck
 make vuln   # govulncheck
 ```
+
+## License
+
+fleet-mcp is released under the [BSD 3-Clause License](LICENSE). It is a personal project, not a Corelight product, and Corelight Support does not support it.

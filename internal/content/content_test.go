@@ -304,7 +304,7 @@ func TestLintModifier(t *testing.T) {
 	// lines neither tool understands are problems.
 	modify := strings.Join([]string{
 		"# comment",
-		`2620092 SrcAddress:![10.1.3.32, 10.1.3.33]`,
+		`2620092 SrcAddress:![192.0.2.32, 192.0.2.33]`,
 		`re:/deployment SSLDecrypt/ DestAddress:![$HOME_NET]`,
 		`2101616 RuleOptions:(msg:"GPL DNS named version returned"; sid:2101616; rev:10;)`,
 		`8001666 Msg:"Some message"`,

@@ -16,7 +16,7 @@ jobs:
 
       # Uses the toolchain directive in go.mod, so CI, local builds and
       # staticcheck all agree on one Go version.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 

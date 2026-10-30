@@ -652,4 +652,4 @@ make vuln   # govulncheck
 
 ## License
 
-fleet-mcp is released under the [BSD 3-Clause License](LICENSE). It is a personal project, not a Corelight product, and Corelight Support does not support it.
+fleet-mcp is released under the [BSD 3-Clause License](LICENSE). fleet-mcp is community supported and Corelight does not support it.

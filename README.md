@@ -2,7 +2,9 @@
 
 An [MCP](https://modelcontextprotocol.io) server for installing, configuring and managing Corelight Fleet Manager.
 
-> **Status:** early development. The server is **read-only unless writes are enabled**. Tested with Fleet Manager 29.2.2: installs on Ubuntu, policy copies between Fleet Managers, and sensor moves.
+> **fleet-mcp is community supported and Corelight does not support it.** Report problems and ideas in [GitHub Issues](https://github.com/jlagermann/fleet-mcp/issues), and security problems as described in [SECURITY.md](SECURITY.md).
+>
+> **Status:** beta. The server is read-only unless you enable writes, and every change shows a preview and waits for your approval. Tested with Fleet Manager 29.2.2 on Ubuntu 24.04. Changes between versions are in the [CHANGELOG](CHANGELOG.md).
 
 ## Tools, skills and instructions
 
@@ -48,14 +50,39 @@ Out of scope: the Corelight Sensor API, and scheduled content fetching.
 - For the API tools, a **local** Fleet Manager user **without 2FA** for the server to log in as. An install creates one for you.
 - For installs: SSH from the machine running fleet-mcp to the host with key authentication and passwordless sudo, plus your own Corelight package repository token and Fleet Manager product identity certificate.
 
-## Build
+## Install
+
+### Download a release
+
+Each [release](https://github.com/jlagermann/fleet-mcp/releases) has a binary for Linux (amd64, arm64), Windows (amd64) and macOS (amd64, arm64), a `SHA256SUMS` file, and a build provenance attestation. The attestation proves the binary was built by this repository's release workflow from the tagged commit. The binaries are not Authenticode-signed or notarized, so check them before you run them:
+
+```sh
+# Linux and macOS: the checksum, then the provenance (needs the GitHub CLI)
+sha256sum --ignore-missing -c SHA256SUMS
+gh attestation verify fleet-mcp_v0.1.0_linux_amd64 --repo jlagermann/fleet-mcp
+```
+
+```powershell
+# Windows: compare with the line for this file in SHA256SUMS, then check the provenance
+(Get-FileHash .\fleet-mcp_v0.1.0_windows_amd64.exe -Algorithm SHA256).Hash.ToLower()
+gh attestation verify .\fleet-mcp_v0.1.0_windows_amd64.exe --repo jlagermann/fleet-mcp
+```
+
+Rename the binary to `fleet-mcp` (`fleet-mcp.exe` on Windows) and put it somewhere stable, such as `~/.local/bin`. On macOS, Gatekeeper blocks binaries that are not notarized. Build from source there rather than removing the quarantine flag.
+
+### Build from source
 
 With Go 1.25 or later:
 
 ```sh
+go install github.com/jlagermann/fleet-mcp/cmd/fleet-mcp@latest   # into $(go env GOPATH)/bin
+
+# or from a clone
 make build            # bin/fleet-mcp
 make build-windows    # bin/fleet-mcp.exe
 ```
+
+`fleet-mcp version` shows the version you built.
 
 ## Register it with your agent
 
@@ -652,4 +679,4 @@ make vuln   # govulncheck
 
 ## License
 
-fleet-mcp is released under the [BSD 3-Clause License](LICENSE). fleet-mcp is community supported and Corelight does not support it.
+fleet-mcp is released under the [BSD 3-Clause License](LICENSE).

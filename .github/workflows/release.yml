@@ -1,0 +1,54 @@
+name: release
+
+# A pushed version tag (v1.2.3) builds the binaries, attests their build
+# provenance and publishes a GitHub release with the CHANGELOG section.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the release
+      id-token: write     # sign the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os=${target%/*}; arch=${target#*/}; ext=""
+            [ "$os" = windows ] && ext=.exe
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+              -o "dist/fleet-mcp_${VERSION}_${os}_${arch}${ext}" ./cmd/fleet-mcp
+          done
+          cd dist && sha256sum fleet-mcp_* > SHA256SUMS && cat SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/fleet-mcp_*
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # Release notes: this version's CHANGELOG section.
+          awk -v h="## ${VERSION#v} " 'index($0, h) == 1 {f = 1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for ${VERSION#v}"; exit 1; }
+          gh release create "$VERSION" dist/* --verify-tag --title "fleet-mcp $VERSION" --notes-file notes.md

@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -46,8 +47,18 @@ import (
 	"github.com/jlagermann/fleet-mcp/internal/tools"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
+// version is set at build time with -ldflags "-X main.version=...". A
+// "go install ...@vX.Y.Z" build takes it from the module version instead.
 var version = "dev"
+
+func init() {
+	if version != "dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		version = bi.Main.Version
+	}
+}
 
 func main() {
 	cmd := "stdio"

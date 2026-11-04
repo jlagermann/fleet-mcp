@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -40,6 +41,9 @@ var (
 // at upload). Lines in Corelight-update syntax are left to planConversion.
 func lintModifier(kind Kind, b []byte) (errs, warns []string) {
 	for i, raw := range strings.Split(string(b), "\n") {
+		if c := controlChar(strings.TrimSuffix(raw, "\r")); c >= 0 {
+			warns = append(warns, fmt.Sprintf("line %d contains control character 0x%02x, invisible in most editors; in a regex it matches only that byte (a \\b written through printf becomes 0x08): %s", i+1, c, clip(strings.TrimSpace(raw))))
+		}
 		ml := parseModLine(kind, i+1, raw)
 		if ml == nil || ml.cu() {
 			continue
@@ -67,6 +71,17 @@ func lintModifier(kind Kind, b []byte) (errs, warns []string) {
 		}
 	}
 	return errs, warns
+}
+
+// controlChar returns the first control character in s other than tab, or
+// -1.
+func controlChar(s string) int {
+	for _, r := range s {
+		if (r < 0x20 && r != '\t') || r == 0x7f {
+			return int(r)
+		}
+	}
+	return -1
 }
 
 // splitModifier splits a line into its match and the rest (the change).
@@ -259,6 +274,86 @@ func (a *applier) verifyModifier(ctx context.Context, sp map[string]any, bad fun
 		bad("the Suricata policy does not use configuration files")
 	}
 	a.waitRuleset(ctx, bad)
+	a.verifyRules(ctx, bad)
+}
+
+// verifyBatch is how many rules one rules-API read asks for.
+const verifyBatch = 200
+
+// verifyRules reads back the rules a converted file should change and
+// reports the ones Fleet Manager did not change the way fleet-mcp's
+// simulation of the file expects, so a difference between the two shows
+// up at push time.
+func (a *applier) verifyRules(ctx context.Context, bad func(string, ...any)) {
+	if len(a.p.expect) == 0 {
+		return
+	}
+	sids := sortedKeys(a.p.expect)
+	var wrong []string
+	for i := 0; i < len(sids); i += verifyBatch {
+		batch := sids[i:min(i+verifyBatch, len(sids))]
+		got, err := rulesBySID(ctx, a.api, idOf(a.p.suricata["id"]), batch)
+		if err != nil {
+			bad("could not read the changed rules back: %v", err)
+			return
+		}
+		for _, sid := range batch {
+			if d := ruleDiff(a.p.expect[sid], got[sid]); d != "" {
+				wrong = append(wrong, "SID "+sid+": "+d)
+			}
+		}
+	}
+	if len(wrong) > 0 {
+		bad("Fleet Manager did not apply the file as expected to %d of %d changed rule(s): %s. Compare those rules and the file's lines for them; the converted file is next to the original",
+			len(wrong), len(sids), strings.Join(sample(wrong, 5), "; "))
+		return
+	}
+	a.did("read back the %d rule(s) the file changes: all as expected", len(sids))
+}
+
+// ruleDiff says how a rule on Fleet Manager differs from the expected one:
+// header fields exactly, options as a set (Fleet Manager may order them
+// differently, e.g. it appends priority).
+func ruleDiff(want *rule, got RuleState) string {
+	if got.SID == "" {
+		return "not found"
+	}
+	var d []string
+	for _, f := range []struct{ name, want, got string }{
+		{"action", want.Action, got.Action}, {"protocol", want.Proto, got.Protocol},
+		{"source", want.Src, got.Src}, {"source port", want.SrcPort, got.SrcPort},
+		{"destination", want.Dst, got.Dst}, {"destination port", want.DstPort, got.DstPort},
+	} {
+		if f.want != f.got {
+			d = append(d, fmt.Sprintf("%s %s, expected %s", f.name, f.got, f.want))
+		}
+	}
+	if !sameOptions(want.Opts, got.Options) {
+		d = append(d, "rule options differ")
+	}
+	return strings.Join(d, ", ")
+}
+
+func sameOptions(a, b string) bool {
+	norm := func(o string) []string {
+		inner, spans := splitOptions(o)
+		out := make([]string, 0, len(spans))
+		for _, s := range spans {
+			out = append(out, strings.TrimSuffix(strings.TrimSpace(inner[s.start:s.end]), ";"))
+		}
+		sort.Strings(out)
+		return out
+	}
+	x, y := norm(a), norm(b)
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
 }
 
 var fmPrefix = regexp.MustCompile(`(?m)^[-+~] `)

@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io) server for installing, configuring and
 
 > **fleet-mcp is community supported and Corelight does not support it.** Report problems and ideas in [GitHub Issues](https://github.com/jlagermann/fleet-mcp/issues), and security problems as described in [SECURITY.md](SECURITY.md).
 >
-> **Status:** beta. The server is read-only unless you enable writes, and every change shows a preview and waits for your approval. Tested with Fleet Manager 29.2.2 on Ubuntu 24.04. Changes between versions are in the [CHANGELOG](CHANGELOG.md).
+> **Status:** beta. The server is read-only unless you enable writes, and every change shows a preview and waits for your approval. Tested with Fleet Manager 29.2.2 and 29.2.6 on Ubuntu 22.04 and 24.04. Changes between versions are in the [CHANGELOG](CHANGELOG.md).
 
 ## Tools, skills and instructions
 
@@ -60,13 +60,13 @@ Each [release](https://github.com/jlagermann/fleet-mcp/releases) has a binary fo
 # Linux and macOS: the checksum, then the provenance (needs GitHub CLI 2.49 or later;
 # distribution packages can be older, so check with gh --version)
 sha256sum --ignore-missing -c SHA256SUMS
-gh attestation verify fleet-mcp_v0.1.0_linux_amd64 --repo jlagermann/fleet-mcp
+gh attestation verify fleet-mcp_v0.1.1_linux_amd64 --repo jlagermann/fleet-mcp
 ```
 
 ```powershell
 # Windows: compare with the line for this file in SHA256SUMS, then check the provenance
-(Get-FileHash .\fleet-mcp_v0.1.0_windows_amd64.exe -Algorithm SHA256).Hash.ToLower()
-gh attestation verify .\fleet-mcp_v0.1.0_windows_amd64.exe --repo jlagermann/fleet-mcp
+(Get-FileHash .\fleet-mcp_v0.1.1_windows_amd64.exe -Algorithm SHA256).Hash.ToLower()
+gh attestation verify .\fleet-mcp_v0.1.1_windows_amd64.exe --repo jlagermann/fleet-mcp
 ```
 
 Rename the binary to `fleet-mcp` (`fleet-mcp.exe` on Windows) and put it somewhere stable, such as `~/.local/bin`. On macOS, Gatekeeper blocks binaries that are not notarized. Build from source there rather than removing the quarantine flag.

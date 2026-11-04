@@ -154,6 +154,9 @@ type Plan struct {
 	policyBody map[string]any
 	// sameFile is set when Fleet Manager already has the exact file.
 	sameFile bool
+	// expect holds, for a converted tuning file, the rules it should change
+	// as they should look afterwards (by SID).
+	expect map[string]*rule
 }
 
 type linkPlan struct {

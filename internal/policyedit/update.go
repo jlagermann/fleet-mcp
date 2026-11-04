@@ -21,7 +21,7 @@ type UpdateRequest struct {
 	// SecretSettings are keys whose values the user stored with
 	// "fleet-mcp secret set-setting <key>"; they never pass through chat.
 	SecretSettings  []string `json:"secret_settings,omitempty" jsonschema:"password-type settings (proxy password, exporter tokens, ...) whose values the user stored at a hidden prompt with: fleet-mcp secret set-setting <key>"`
-	EnablePackages  []string `json:"enable_packages,omitempty" jsonschema:"packages to enable: Corelight packages by name (e.g. corelight:ja4 or its display name) or custom bundle packages by key or name"`
+	EnablePackages  []string `json:"enable_packages,omitempty" jsonschema:"packages to enable: Corelight packages by name (e.g. corelight:stepping-stones or its display name) or custom bundle packages by key or name"`
 	DisablePackages []string `json:"disable_packages,omitempty" jsonschema:"packages to disable, named as in enable_packages"`
 	SuricataPolicy  string   `json:"suricata_policy,omitempty" jsonschema:"Suricata policy to link (id or name), or none to unlink"`
 	YaraRuleset     string   `json:"yara_ruleset,omitempty" jsonschema:"YARA ruleset to link (id or name), or none"`
@@ -563,7 +563,11 @@ func ApplyUpdate(ctx context.Context, api API, p *UpdatePlan) (*UpdateResult, er
 		Deletions []string       `json:"configuration.deletions"`
 	}
 	_ = json.Unmarshal(resp.Body, &d)
-	res.Done = append(res.Done, fmt.Sprintf("updated sensor policy %s: %d setting(s) changed, %d reset to default", p.Policy, len(d.Delta), len(d.Deletions)))
+	done := fmt.Sprintf("updated sensor policy %s: %d setting(s) changed, %d reset to default", p.Policy, len(d.Delta), len(d.Deletions))
+	if len(p.linkTo) > 0 {
+		done += fmt.Sprintf(", %d link(s) changed (%s)", len(p.linkTo), strings.Join(sortedKeys(p.linkTo), ", "))
+	}
+	res.Done = append(res.Done, done)
 
 	var after map[string]any
 	if err := api.GetJSON(ctx, fmt.Sprintf("%s/%d", pathPolicy, p.Policy.ID), nil, &after); err != nil {

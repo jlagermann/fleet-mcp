@@ -174,3 +174,27 @@ func TestConvertDisabledRules(t *testing.T) {
 		t.Errorf("notes: %v", out.notes)
 	}
 }
+
+func TestRuleDiff(t *testing.T) {
+	want, _ := parseRule(`alert http [$EXTERNAL_NET,!192.0.2.1] any -> $HOME_NET any (msg:"x"; content:"a"; priority:2; sid:1; rev:1;)`)
+	// Fleet Manager appends priority after rev: the same options.
+	same := RuleState{SID: "1", Action: "alert", Protocol: "http", Src: "[$EXTERNAL_NET,!192.0.2.1]", SrcPort: "any", Dst: "$HOME_NET", DstPort: "any",
+		Options: `(msg:"x"; content:"a"; sid:1; rev:1; priority:2;)`}
+	if d := ruleDiff(want, same); d != "" {
+		t.Errorf("same rule: %s", d)
+	}
+	// The case seen live: Fleet Manager skipped the re: line for this rule.
+	skipped := same
+	skipped.Src = "$EXTERNAL_NET"
+	if d := ruleDiff(want, skipped); d != "source $EXTERNAL_NET, expected [$EXTERNAL_NET,!192.0.2.1]" {
+		t.Errorf("skipped: %q", d)
+	}
+	if d := ruleDiff(want, RuleState{}); d != "not found" {
+		t.Errorf("missing: %q", d)
+	}
+	other := same
+	other.Options = `(msg:"y"; content:"a"; sid:1; rev:1; priority:2;)`
+	if d := ruleDiff(want, other); d != "rule options differ" {
+		t.Errorf("options: %q", d)
+	}
+}

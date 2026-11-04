@@ -106,7 +106,7 @@ section time
 timedatectl show -p NTPSynchronized -p Timezone 2>/dev/null
 for d in ntpsec ntp chrony systemd-timesyncd; do [ "$(systemctl is-active $d 2>/dev/null)" = active ] && echo "daemon=$d"; done
 if command -v ntpq >/dev/null 2>&1; then
-  ntpq -c rv 2>/dev/null | grep -q sync_unspec && echo "ntpd=unsynchronized"
+  ntpq -c rv 2>/dev/null | tr ',' '\n' | awk -F= '$1 ~ /^ *(leap|stratum)$/ { gsub(/ /, "", $1); print "ntpd_" $1 "=" $2 }'
   ntpq -pn 2>/dev/null | awk 'NR>2 && $9 ~ /^-?[0-9.]+$/ && $7 != "0" { o = $9 < 0 ? -$9 : $9; if (o > m) m = o } END { if (m != "") print "maxoffsetms=" m }'
 fi
 command -v chronyc >/dev/null 2>&1 && chronyc tracking 2>/dev/null | awk -F': ' '/System time/{print "chrony=" $2}'
@@ -370,24 +370,28 @@ func parse(out string, now time.Time) *Report {
 	}
 
 	// Time.
-	synced, daemon, ntpdBad, maxOff := true, "", false, 0.0
+	synced, daemon, leap, stratum, maxOff := true, "", "", 0, 0.0
 	for _, l := range sec["time"] {
 		switch {
 		case strings.HasPrefix(l, "NTPSynchronized="):
 			synced = strings.TrimPrefix(l, "NTPSynchronized=") == "yes"
 		case strings.HasPrefix(l, "daemon="):
 			daemon = strings.TrimPrefix(l, "daemon=")
-		case l == "ntpd=unsynchronized":
-			ntpdBad = true
+		case strings.HasPrefix(l, "ntpd_leap="):
+			leap = strings.TrimSpace(strings.TrimPrefix(l, "ntpd_leap="))
+		case strings.HasPrefix(l, "ntpd_stratum="):
+			stratum, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(l, "ntpd_stratum=")))
 		case strings.HasPrefix(l, "maxoffsetms="):
 			maxOff, _ = strconv.ParseFloat(strings.TrimPrefix(l, "maxoffsetms="), 64)
 		}
 	}
 	// timedatectl only knows systemd-timesyncd: with ntpd it says "no"
-	// even when ntpd is in sync, so ntpd's own state decides then.
+	// even when ntpd is in sync, so ntpd's own state decides then: leap 11
+	// (alarm) or stratum 16 means unsynchronized. Its status word is no
+	// help, since ntpsec reports sync_unspec while synchronized.
 	unsynced := !synced
-	if strings.HasPrefix(daemon, "ntp") {
-		unsynced = ntpdBad
+	if strings.HasPrefix(daemon, "ntp") && leap != "" {
+		unsynced = leap == "11" || stratum == 0 || stratum >= 16
 	}
 	if unsynced || maxOff > 1000 {
 		msg := "the clock is not NTP-synchronized"

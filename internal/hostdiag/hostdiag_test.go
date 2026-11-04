@@ -42,7 +42,8 @@ notAfter=Feb 27 12:00:00 2027 GMT
 ### time
 NTPSynchronized=no
 daemon=ntpsec
-ntpd=unsynchronized
+ntpd_leap=11
+ntpd_stratum=16
 maxoffsetms=67339.39
 Timezone=America/Chicago
 ### perms
@@ -96,5 +97,25 @@ func TestParse(t *testing.T) {
 	}
 	if r.Findings[0].Severity != "error" {
 		t.Errorf("errors first: %v", r.Findings[0])
+	}
+}
+
+// ntpsec reports sync_unspec in its status word while synchronized; the
+// leap indicator and stratum decide (seen on a Fleet Manager in 2026-11).
+func TestNTPSecSynced(t *testing.T) {
+	now := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	out := "### time\nNTPSynchronized=no\ndaemon=ntpsec\nntpd_leap=00\nntpd_stratum=2\nmaxoffsetms=0.01\n### end\n"
+	for _, f := range parse(out, now).Findings {
+		if f.Area == "time" {
+			t.Errorf("synchronized ntpsec flagged: %s", f.Message)
+		}
+	}
+	out = "### time\nNTPSynchronized=no\ndaemon=ntpsec\nntpd_leap=00\nntpd_stratum=16\n### end\n"
+	found := false
+	for _, f := range parse(out, now).Findings {
+		found = found || f.Area == "time"
+	}
+	if !found {
+		t.Error("stratum 16 not flagged")
 	}
 }

@@ -560,12 +560,18 @@ func TestModifyConversionPush(t *testing.T) {
 		!strings.Contains(string(written), "# fleet-mcp: commented out (the current modify.conf") {
 		t.Fatalf("written %s: %v\n%s", outPath, err, written)
 	}
+	// The fake does not run modify.conf, so give rule 200 the state Fleet
+	// Manager would build (100 already has it); the push reads both back.
+	fm.suricata[9]["rules"].(map[string]any)["200"].(map[string]any)["srcAddress"] = "1.2.3.4"
 	res, err := content.Apply(ctx, fm.client, p)
 	if err != nil || len(res.Verification) > 0 {
 		t.Fatalf("apply: %v %+v", err, res)
 	}
 	if string(fm.files[res.FileID]) != string(written) {
 		t.Errorf("uploaded file differs from %s", outPath)
+	}
+	if !strings.Contains(strings.Join(res.Done, "\n"), "read back the 2 rule(s) the file changes: all as expected") {
+		t.Errorf("done: %v", res.Done)
 	}
 
 	// rules_file supplies the URL source's original text.
@@ -578,5 +584,14 @@ func TestModifyConversionPush(t *testing.T) {
 	}
 	if p.Conversion.Lines[0].Action != "converted" || len(p.Conversion.NeedRulesFile) != 0 {
 		t.Errorf("rules_file only fills in missing rules: %s", preview(t, p.Conversion))
+	}
+}
+
+func TestLintControlCharacter(t *testing.T) {
+	// A \b written through printf: the regex then needs a literal backspace.
+	modify := `re:(tag\sExploit` + "\x08" + `|followup\swatch) "^(alert \S+) (\$\w+) " "$1 [$2,!192.0.2.99] "` + "\r\n2000001 SrcAddress:any\n"
+	_, warns := content.LintModifier(content.SuricataModify, []byte(modify))
+	if len(warns) != 1 || !strings.Contains(warns[0], "line 1 contains control character 0x08") {
+		t.Errorf("warnings: %v", warns)
 	}
 }

@@ -715,7 +715,25 @@ func (p *Plan) planConversion(ctx context.Context, api API, current []byte) erro
 		}
 		conv.RuleText = rs.from
 	}
+	var before map[string]string
+	if rs != nil {
+		before = make(map[string]string, len(rs.list))
+		for _, r := range rs.list {
+			before[r.SID] = r.text()
+		}
+	}
 	out := convertModifier(p.Kind, p.content, answer, rs)
+	if rs != nil {
+		// What every enabled rule the file changes should look like on
+		// Fleet Manager afterwards; verifyModifier compares.
+		p.expect = map[string]*rule{}
+		for _, r := range rs.list {
+			if !r.Disabled && r.text() != before[r.SID] {
+				c := *r
+				p.expect[r.SID] = &c
+			}
+		}
+	}
 	conv.Lines, conv.FrozenSIDs, conv.NeedRulesFile = out.lines, out.frozen, out.needRulesFile
 	p.Notes = append(p.Notes, out.notes...)
 	p.Warnings = append(p.Warnings, out.warns...)

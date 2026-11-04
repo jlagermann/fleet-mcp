@@ -2,6 +2,17 @@
 
 All notable changes to fleet-mcp. Versions follow [Semantic Versioning](https://semver.org); until 1.0, a minor version may change tool arguments or results.
 
+## 0.1.1 — 2026-11-04
+
+Tested with Fleet Manager 29.2.6, whose REST and GraphQL APIs are identical to 29.2.2's.
+
+- **Suricata tuning files:** after a converted modify.conf is pushed, fleet-mcp reads back every rule the file should change and reports any that Fleet Manager did not change as expected.
+- **Suricata tuning files:** the preview warns about control characters in a line (for example a backspace left by a script that wrote `\b` through `printf`); they are invisible in most editors but change what a regex matches.
+- **fm_sensor_fleet** refuses Software Sensors with an explanation; it moves appliance sensors only.
+- **fm_host_diagnose** no longer reports a synchronized ntpsec clock as unsynchronized. It now uses the leap indicator and stratum, since ntpsec can report `sync_unspec` while in sync.
+- **Policy updates** report changed links (Suricata policy, collections, YARA ruleset, bundle) in their summary.
+- The `enable_packages` example names a package Fleet Manager 29.2 has.
+
 ## 0.1.0 — 2026-11-04
 
 First public release (beta). Tested with Fleet Manager 29.2.2.

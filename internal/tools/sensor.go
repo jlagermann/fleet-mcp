@@ -87,7 +87,7 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 	t, f := true, false
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "fm_sensor_fleet",
-		Description: guideFirst("move-sensor") + "Detach a sensor from Fleet Manager or attach it to one, on the sensor itself: fleet-mcp logs in over SSH as diag-shell (its own key if installed, else the sensor-admin-password secret) and runs corelight-client configuration update. " +
+		Description: guideFirst("move-sensor") + "Detach a sensor from Fleet Manager or attach it to one, for appliance sensors (hardware, virtual and cloud; not Software Sensors), on the sensor itself: fleet-mcp logs in over SSH as diag-shell (its own key if installed, else the sensor-admin-password secret) and runs corelight-client configuration update. " +
 			"detach: fleet.enable=false. The Fleet Manager keeps the sensor's record, group and policy and shows it offline; the sensor keeps running with its current configuration. " +
 			"attach: three steps, about 30 s apart: fleet.enable=false (so a connected Fleet Manager cannot put its fleet.server_sslname back), then target_fleet's address and community string with fleet.server_sslname cleared (it comes from each Fleet Manager's license), then fleet.enable=true. " +
 			"Attaching to the Fleet Manager that lists the sensor reconnects it to its group and policy there (also how a sensor gets a new community string); attaching to another one moves it: a sensor new to that Fleet Manager arrives in UNASSIGNED and keeps its configuration until it is put in a group with a policy, and its entry on the old one goes offline. " +
@@ -116,6 +116,9 @@ func registerSensorWrite(s *mcp.Server, d *Deps) {
 			return nil, nil, err
 		}
 		uid, name := fmt.Sprint(sensor["uid"]), fmt.Sprint(sensor["name"])
+		if platform, _ := sensorStatus(sensor); platform == platformSoftware {
+			return nil, nil, fmt.Errorf("%s is a Software Sensor: fm_sensor_fleet supports appliance sensors only (it works through diag-shell and corelight-client, which a Software Sensor does not have). A Software Sensor's Fleet Manager is set in /etc/corelight/corelightctl.yaml on its host (sensor.pairing, with a pairing token from a sensor record created on the target Fleet Manager); fleet-mcp does not move Software Sensors yet", name)
+		}
 		sshHost := a.SensorHost
 		if sshHost == "" {
 			sshHost = sensorAddress(sensor)

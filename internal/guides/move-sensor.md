@@ -1,6 +1,6 @@
 # Detach, attach or move a sensor
 
-`fm_sensor_fleet` changes which Fleet Manager a sensor uses, on the sensor itself:
+`fm_sensor_fleet` changes which Fleet Manager an **appliance** sensor (hardware, virtual, cloud) uses, on the sensor itself. It does not move Software Sensors: their Fleet Manager is set in `corelightctl.yaml` on the host, with a pairing token from a sensor record on the target, and fleet-mcp does not support that yet. Tell the user so.
 
 - **detach**: turn Fleet Manager off on the sensor, e.g. to use it for a test. The Fleet Manager keeps its record, group and policy and shows it offline. Do not delete the sensor from Fleet Manager for this.
 - **attach**: connect the sensor to `target_fleet` (default: the Fleet Manager that lists it). Attaching to that same Fleet Manager reattaches a detached sensor, or gives a sensor a new community string. Attaching to another Fleet Manager moves the sensor.

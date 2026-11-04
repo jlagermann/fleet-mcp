@@ -57,7 +57,8 @@ Out of scope: the Corelight Sensor API, and scheduled content fetching.
 Each [release](https://github.com/jlagermann/fleet-mcp/releases) has a binary for Linux (amd64, arm64), Windows (amd64) and macOS (amd64, arm64), a `SHA256SUMS` file, and a build provenance attestation. The attestation proves the binary was built by this repository's release workflow from the tagged commit. The binaries are not Authenticode-signed or notarized, so check them before you run them:
 
 ```sh
-# Linux and macOS: the checksum, then the provenance (needs the GitHub CLI)
+# Linux and macOS: the checksum, then the provenance (needs GitHub CLI 2.49 or later;
+# distribution packages can be older, so check with gh --version)
 sha256sum --ignore-missing -c SHA256SUMS
 gh attestation verify fleet-mcp_v0.1.0_linux_amd64 --repo jlagermann/fleet-mcp
 ```

@@ -39,7 +39,7 @@ jobs:
           done
           cd dist && sha256sum fleet-mcp_* > SHA256SUMS && cat SHA256SUMS
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/fleet-mcp_*
 
